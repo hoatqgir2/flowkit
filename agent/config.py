@@ -7,6 +7,22 @@ from pathlib import Path
 BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent))
 DB_PATH = BASE_DIR / "flow_agent.db"
 
+# Auto-load .env file if present
+_env_file = BASE_DIR / ".env"
+if _env_file.exists():
+    try:
+        for _line in _env_file.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            _k = _k.strip()
+            _v = _v.strip().strip('"').strip("'")
+            if _k and _k not in os.environ:
+                os.environ[_k] = _v
+    except Exception:
+        pass
+
 # ─── API Server ──────────────────────────────────────────────
 API_HOST = os.environ.get("API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("API_PORT", "8100"))
@@ -92,8 +108,17 @@ MUSE2API_ALLOW_DEGRADED = os.environ.get("MUSE2API_ALLOW_DEGRADED", "0") == "1"
 # ─── Worker ──────────────────────────────────────────────────
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
 VIDEO_POLL_INTERVAL = int(os.environ.get("VIDEO_POLL_INTERVAL", "10"))  # polling interval for video/upscale status
-MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "5"))
+MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "2"))
 VIDEO_POLL_TIMEOUT = int(os.environ.get("VIDEO_POLL_TIMEOUT", "420"))
+# Omni Flash defaults used by the worker when a project's video_model_family
+# is "omni_flash". Duration must be 4/6/8/10; resolution 360p or 720p.
+OMNI_FLASH_DURATION_S = int(os.environ.get("OMNI_FLASH_DURATION_S", "8"))
+OMNI_FLASH_RESOLUTION = os.environ.get("OMNI_FLASH_RESOLUTION", "720p")
+# Flow provider pacing. Every generate mints a reCAPTCHA inside the Flow tab;
+# firing them back-to-back from a background tab degrades the session score
+# until Google answers PUBLIC_ERROR_UNUSUAL_ACTIVITY. Slow down when that hits.
+FLOW_MAX_CONCURRENT = int(os.environ.get("FLOW_MAX_CONCURRENT", "5"))
+FLOW_COOLDOWN_S = float(os.environ.get("FLOW_COOLDOWN_S", "10"))
 API_COOLDOWN = int(os.environ.get("API_COOLDOWN", "10"))  # DEPRECATED: per-provider cooldown_s in provider capabilities is authoritative
 MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "5"))  # DEPRECATED: per-provider max_concurrent in provider capabilities is authoritative
 STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600"))  # 10 min

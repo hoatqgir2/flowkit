@@ -9,6 +9,8 @@ import { count, sceneStageStatus, charStatus, latestRequest, type SceneStage } f
 import { Button } from '../ui/button'
 import { Avatar, AvatarFallback, AvatarGroup } from '../ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { Sparkles, Film, RefreshCw, Eye, Loader2 } from 'lucide-react'
+import { cn } from '../../lib/utils'
 import StageNode from './StageNode'
 import SceneCard from './SceneCard'
 import SceneDetailSheet from './SceneDetailSheet'
@@ -49,6 +51,10 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
   const [reviewRunning, setReviewRunning] = useState<{ sceneId: string; mode: 'light' | 'deep' } | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [retryingSceneId, setRetryingSceneId] = useState<string | null>(null)
+  const [batchLoading, setBatchLoading] = useState(false)
+  const [batchMessage, setBatchMessage] = useState<string | null>(null)
+  const [concatLoading, setConcatLoading] = useState(false)
+  const [refreshLoading, setRefreshLoading] = useState(false)
 
   const { lastEvent } = useWebSocketContext()
 
@@ -138,6 +144,174 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
     }
   }
 
+  async function generateAllRefs() {
+    const unready = characters.filter(c => charStatus(c, requests) !== 'COMPLETED')
+    const targets = unready.length > 0 ? unready : characters
+    if (targets.length === 0) return
+
+    setBatchLoading(true)
+    setBatchMessage(`Đang gửi ${targets.length} yêu cầu tạo ảnh nhân vật...`)
+    try {
+      await fetchAPI('/api/requests/batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: targets.map(c => ({
+            type: 'GENERATE_CHARACTER_IMAGE',
+            character_id: c.id,
+            project_id: projectId,
+          })),
+        }),
+      })
+      await load()
+      setBatchMessage(`Đã gửi thành công ${targets.length} yêu cầu tạo ảnh nhân vật!`)
+      setTimeout(() => setBatchMessage(null), 4000)
+    } catch (e: any) {
+      setBatchMessage(`Lỗi: ${e.message}`)
+    } finally {
+      setBatchLoading(false)
+    }
+  }
+
+  async function generateAllImages() {
+    const unready = scenes.filter(s => sceneStageStatus(s, 'image') !== 'COMPLETED')
+    const targets = unready.length > 0 ? unready : scenes
+    if (targets.length === 0) return
+
+    setBatchLoading(true)
+    setBatchMessage(`Đang gửi ${targets.length} yêu cầu tạo ảnh phân cảnh...`)
+    try {
+      await fetchAPI('/api/requests/batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: targets.map(s => ({
+            type: 'GENERATE_IMAGE',
+            scene_id: s.id,
+            project_id: projectId,
+            video_id: videoId,
+            orientation: video?.orientation || 'VERTICAL',
+          })),
+        }),
+      })
+      await load()
+      setBatchMessage(`Đã gửi thành công ${targets.length} yêu cầu tạo ảnh cảnh!`)
+      setTimeout(() => setBatchMessage(null), 4000)
+    } catch (e: any) {
+      setBatchMessage(`Lỗi: ${e.message}`)
+    } finally {
+      setBatchLoading(false)
+    }
+  }
+
+  async function generateAllVideos() {
+    const unready = scenes.filter(s => sceneStageStatus(s, 'video') !== 'COMPLETED')
+    const targets = unready.length > 0 ? unready : scenes
+    if (targets.length === 0) return
+
+    setBatchLoading(true)
+    setBatchMessage(`Đang gửi ${targets.length} yêu cầu tạo video phân cảnh...`)
+    try {
+      await fetchAPI('/api/requests/batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: targets.map(s => ({
+            type: 'GENERATE_VIDEO',
+            scene_id: s.id,
+            project_id: projectId,
+            video_id: videoId,
+            orientation: video?.orientation || 'VERTICAL',
+          })),
+        }),
+      })
+      await load()
+      setBatchMessage(`Đã gửi thành công ${targets.length} yêu cầu tạo video cảnh!`)
+      setTimeout(() => setBatchMessage(null), 4000)
+    } catch (e: any) {
+      setBatchMessage(`Lỗi: ${e.message}`)
+    } finally {
+      setBatchLoading(false)
+    }
+  }
+
+  async function reviewAllVideos() {
+    setBatchLoading(true)
+    setBatchMessage('AI đang chấm điểm video các phân cảnh...')
+    try {
+      await fetchAPI(`/api/videos/${videoId}/review?project_id=${projectId}&mode=light`, {
+        method: 'POST',
+      })
+      await load()
+      setBatchMessage('Hoàn tất chấm điểm AI cho video!')
+      setTimeout(() => setBatchMessage(null), 4000)
+    } catch (e: any) {
+      setBatchMessage(`Lỗi review: ${e.message}`)
+    } finally {
+      setBatchLoading(false)
+    }
+  }
+
+  async function upscaleAllVideos() {
+    const targets = scenes
+    if (targets.length === 0) return
+
+    setBatchLoading(true)
+    setBatchMessage(`Đang gửi ${targets.length} yêu cầu upscale 4K...`)
+    try {
+      await fetchAPI('/api/requests/batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: targets.map(s => ({
+            type: 'UPSCALE_VIDEO',
+            scene_id: s.id,
+            project_id: projectId,
+            video_id: videoId,
+          })),
+        }),
+      })
+      await load()
+      setBatchMessage(`Đã gửi ${targets.length} yêu cầu upscale 4K!`)
+      setTimeout(() => setBatchMessage(null), 4000)
+    } catch (e: any) {
+      setBatchMessage(`Lỗi upscale: ${e.message}`)
+    } finally {
+      setBatchLoading(false)
+    }
+  }
+
+  async function handleConcatVideo() {
+    setConcatLoading(true)
+    setBatchMessage('Đang ghép các clip phân cảnh thành video hoàn chỉnh (ffmpeg)...')
+    try {
+      const res = await fetchAPI<any>(`/api/videos/${videoId}/concat`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+      await load()
+      setBatchMessage(`Ghép video thành công! (${res.scenes_used} cảnh, thời lượng: ${res.duration ? res.duration.toFixed(1) + 's' : 'xong'})`)
+      setTimeout(() => setBatchMessage(null), 6000)
+    } catch (e: any) {
+      setBatchMessage(`Lỗi ghép video: ${e.message}`)
+    } finally {
+      setConcatLoading(false)
+    }
+  }
+
+  async function handleRefreshUrls() {
+    setRefreshLoading(true)
+    setBatchMessage('Đang làm mới media URLs qua Google Flow...')
+    try {
+      const res = await fetchAPI<any>(`/api/flow/refresh-urls/${projectId}`, {
+        method: 'POST',
+      })
+      await load()
+      setBatchMessage(`Làm mới URL thành công (${res.refreshed ?? 0} URL đã cập nhật)`)
+      setTimeout(() => setBatchMessage(null), 4000)
+    } catch (e: any) {
+      setBatchMessage(`Lỗi làm mới URL: ${e.message}`)
+    } finally {
+      setRefreshLoading(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       {/* Header */}
@@ -190,8 +364,60 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
             </span>
             <span className="text-[11px]" style={{ color: 'var(--muted)' }}>· {t('pipeline.queue', { n: pendingCount })}</span>
           </div>
+
+          <div className="w-px h-8" style={{ background: 'var(--border)' }} />
+
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRefreshUrls}
+              disabled={refreshLoading}
+              className="gap-1.5 cursor-pointer text-xs"
+              title="Làm mới URLs hết hạn qua Google Flow"
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5", refreshLoading && "animate-spin")} />
+              <span>{refreshLoading ? "Đang làm mới..." : "Làm mới URL"}</span>
+            </Button>
+
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleConcatVideo}
+              disabled={concatLoading}
+              className="gap-1.5 cursor-pointer text-xs font-medium"
+              title="Ghép các phân cảnh thành video hoàn chỉnh"
+            >
+              <Film className="w-3.5 h-3.5" />
+              <span>{concatLoading ? "Đang ghép..." : "Ghép video"}</span>
+            </Button>
+          </div>
         </div>
       </div>
+
+      {batchMessage && (
+        <div
+          className="flex items-center justify-between p-3 rounded-md text-xs transition-all"
+          style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--accent)',
+            color: 'var(--text)',
+          }}
+        >
+          <div className="flex items-center gap-2.5">
+            {batchLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />}
+            <span className="font-medium">{batchMessage}</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[11px] px-2"
+            onClick={() => setBatchMessage(null)}
+          >
+            Đóng
+          </Button>
+        </div>
+      )}
 
       {/* Stage rail */}
       <div className="flex items-stretch gap-2.5">
@@ -210,9 +436,20 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
 
       {/* Sort toggle + scene/refs grid */}
       {activeStage === 'refs' ? (
-        <div>
-          <div className="text-xs mb-2.5 font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-            {t('pipeline.refsHeading', { n: characters.length })}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+              {t('pipeline.refsHeading', { n: characters.length })}
+            </div>
+            <Button
+              size="sm"
+              onClick={generateAllRefs}
+              disabled={batchLoading || characters.length === 0}
+              className="gap-1.5 cursor-pointer text-xs"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Tạo tất cả ảnh nhân vật (Generate All Refs)</span>
+            </Button>
           </div>
           <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
             {characters.map(c => {
@@ -244,7 +481,55 @@ export default function PipelineView({ projectId, videoId }: PipelineViewProps) 
               {t('pipeline.stageHeading', { idx: STAGE_META.find(m => m.key === activeStage)!.idx, name: t(STAGE_META.find(m => m.key === activeStage)!.nameKey) })}
             </h2>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] tracking-wide uppercase" style={{ color: 'var(--muted)' }}>{t('pipeline.sort')}</span>
+              {activeStage === 'image' && (
+                <Button
+                  size="sm"
+                  onClick={generateAllImages}
+                  disabled={batchLoading || scenes.length === 0}
+                  className="gap-1.5 cursor-pointer text-xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Tạo tất cả ảnh cảnh (Generate All Images)</span>
+                </Button>
+              )}
+
+              {activeStage === 'video' && (
+                <>
+                  <Button
+                    size="sm"
+                    onClick={generateAllVideos}
+                    disabled={batchLoading || scenes.length === 0}
+                    className="gap-1.5 cursor-pointer text-xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Tạo tất cả Video</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={reviewAllVideos}
+                    disabled={batchLoading || scenes.length === 0}
+                    className="gap-1.5 cursor-pointer text-xs"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-blue-400" />
+                    <span>AI Review Video</span>
+                  </Button>
+                </>
+              )}
+
+              {activeStage === 'upscale' && (
+                <Button
+                  size="sm"
+                  onClick={upscaleAllVideos}
+                  disabled={batchLoading || scenes.length === 0}
+                  className="gap-1.5 cursor-pointer text-xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Upscale tất cả (4K)</span>
+                </Button>
+              )}
+
+              <span className="text-[10px] tracking-wide uppercase ml-2" style={{ color: 'var(--muted)' }}>{t('pipeline.sort')}</span>
               <Button variant="outline" size="sm" onClick={() => setSortFailedFirst(v => !v)}>
                 {sortFailedFirst ? t('pipeline.sortFailuresFirst') : t('pipeline.sortSceneOrder')}
               </Button>

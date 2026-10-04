@@ -600,8 +600,21 @@ class FlowClient:
                              timeout: float = 300):
         """One RPC, unwrapped to its inner payload. Raises on anything else."""
         result = await self.batch_rpc(rpcid, freq, captcha_action, timeout=timeout)
+        raw_data = str(result.get("data") or "")[:500]
         if result.get("error"):
-            raise fb.FlowBatchError(f"{rpcid}: {result['error']}")
+            err = result["error"]
+            if "HTTP_400" in str(err) or result.get("status") == 400:
+                raise fb.FlowBatchError(
+                    f"{rpcid}: Google Flow trả về HTTP 400 (Bad Request). Chi tiết: {raw_data or err}"
+                )
+            raise fb.FlowBatchError(f"{rpcid}: {err}")
+        if isinstance(result.get("status"), int) and result["status"] >= 400:
+            status = result["status"]
+            if status == 400:
+                raise fb.FlowBatchError(
+                    f"{rpcid}: Google Flow trả về HTTP 400 (Bad Request). Chi tiết: {raw_data}"
+                )
+            raise fb.FlowBatchError(f"{rpcid}: Google Flow trả về HTTP {status}: {raw_data}")
         return fb.first_payload(result.get("data") or "", rpcid)
 
     def _batch_project_id(self, project_id: str) -> str:
@@ -612,10 +625,15 @@ class FlowClient:
         session-project lease before reaching this lower-level helper. The
         legacy FLOW_PROJECT_ID fallback remains for older internal callers.
         """
-        if project_id and self._UUID_RE.match(str(project_id)):
-            return str(project_id)
+        import re
+        if project_id:
+            m = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(project_id), re.I)
+            if m:
+                return m.group(0).lower()
         if FLOW_PROJECT_ID:
-            return FLOW_PROJECT_ID
+            m = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", FLOW_PROJECT_ID, re.I)
+            if m:
+                return m.group(0).lower()
         raise fb.FlowBatchError(
             "NO_FLOW_PROJECT: every batchexecute call is scoped to a Flow project. "
             "Create one in the Flow UI and pin its uuid as FLOW_PROJECT_ID."
@@ -650,9 +668,13 @@ class FlowClient:
     # ─── High-level API Methods ──────────────────────────────
 
     def flow_project_id(self, requested: str | None = None) -> str | None:
-        """Validate an explicitly requested Flow project id."""
-        if requested and self._UUID_RE.match(requested):
-            return requested
+        """Validate an explicitly requested Flow project id (accepts bare UUID or Flow URL)."""
+        if not requested:
+            return None
+        import re
+        m = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(requested), re.I)
+        if m:
+            return m.group(0).lower()
         return None
 
     async def create_project(self, project_title: str, tool_name: str = "PINHOLE") -> dict:

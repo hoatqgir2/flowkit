@@ -95,8 +95,11 @@ function updateStatus(data) {
     if (ageMs > 3300000 && data.agentConnected) {
       chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' });
     }
+  } else if (data.agentConnected) {
+    tokenEl.textContent = 'session active (batchexecute)';
+    tokenEl.className = 'ok';
   } else {
-    tokenEl.textContent = 'no token';
+    tokenEl.textContent = 'offline';
     tokenEl.className = 'bad';
   }
 

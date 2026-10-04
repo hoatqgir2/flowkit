@@ -48,6 +48,7 @@ export interface Video {
   thumbnail_url: string | null
   duration: number | null
   resolution: string | null
+  orientation?: string | null
   created_at: string
   updated_at: string
 }

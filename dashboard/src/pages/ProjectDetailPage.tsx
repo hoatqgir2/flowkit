@@ -13,6 +13,7 @@ import { Progress } from '../components/ui/progress'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../components/ui/table'
 import { Button } from '../components/ui/button'
+import { Sparkles } from 'lucide-react'
 
 type Tab = 'overview' | 'characters' | 'videos' | 'pipeline'
 const STAGE_KEYS: ('refs' | SceneStage)[] = ['refs', 'image', 'video', 'upscale']
@@ -110,7 +111,19 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
             {t('projectDetail.header', { id: project.id, date: formatDate(project.created_at), videos: videos.length, scenes: allScenes.length })}
           </span>
         </div>
-        <Button variant="ghost" size="sm" onClick={onBack}>{t('projectDetail.back')}</Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => setTab('pipeline')}
+            className="gap-1.5 cursor-pointer font-medium"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>Mở Pipeline</span>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onBack}>
+            {t('projectDetail.back')}
+          </Button>
+        </div>
       </div>
 
       <Tabs value={tab} onValueChange={v => setTab(v as Tab)}>

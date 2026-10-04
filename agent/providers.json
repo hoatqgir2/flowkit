@@ -1,9 +1,9 @@
 {
-  "active": "claude",
+  "active": "agy",
   "roles": {
     "video_review": {
-      "provider": "claude",
-      "model": null,
+      "provider": "agy",
+      "model": "gemini-3.8-flash-high",
       "effort": null
     }
   }

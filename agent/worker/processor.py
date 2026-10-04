@@ -530,17 +530,17 @@ async def _handle_failure(rid: str, req: dict, result: dict, retry_after: dict =
         logger.info("Request %s transient WS error, will retry (no retry increment): %s", rid[:8], error_msg)
         return
 
-    # reCAPTCHA errors: retry up to 10 times — deferred dict in main loop handles delay
+    # reCAPTCHA errors: retry up to MAX_RETRIES times — deferred dict in main loop handles delay
     if "captcha" in error_lower or "recaptcha" in error_lower:
         retry = req.get("retry_count", 0) + 1
-        if retry < 10:
+        if retry < MAX_RETRIES:
             await crud.update_request(rid, status="PENDING", retry_count=retry, error_message=str(error_msg))
-            logger.warning("Request %s reCAPTCHA failed (retry %d/10), will retry", rid[:8], retry)
+            logger.warning("Request %s reCAPTCHA failed (retry %d/%d), will retry", rid[:8], retry, MAX_RETRIES)
             return
         else:
             await crud.update_request(rid, status="FAILED", error_message=str(error_msg))
             await _mark_scene_failed(req)
-            logger.error("Request %s FAILED after 10 reCAPTCHA retries: %s", rid[:8], error_msg)
+            logger.error("Request %s FAILED after %d reCAPTCHA retries: %s", rid[:8], MAX_RETRIES, error_msg)
             return
 
     retry = req.get("retry_count", 0) + 1

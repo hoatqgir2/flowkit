@@ -456,6 +456,7 @@ class TestProjectAndCredits:
 
     async def test_flow_project_id_only_accepts_explicit_ids(self, client):
         assert client.flow_project_id(PROJECT) == PROJECT
+        assert client.flow_project_id(f"https://flow.google.com/project/{PROJECT}") == PROJECT
         assert client.flow_project_id("") is None
         assert client.flow_project_id("not-a-project") is None
 

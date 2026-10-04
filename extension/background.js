@@ -247,6 +247,8 @@ function connectToAgent() {
         await handleTrpcRequest(msg);
       } else if (msg.method === 'solve_captcha') {
         await handleSolveCaptcha(msg);
+      } else if (msg.method === 'reload_extension') {
+        chrome.runtime.reload();
       } else if (msg.method === 'get_status') {
         sendToAgent({
           id: msg.id,
@@ -366,8 +368,14 @@ function captchaFromTab(tabId, requestId, captchaAction) {
   ]);
 }
 
-async function solveCaptcha(requestId, captchaAction) {
+async function solveCaptcha(requestId, captchaAction, preferredTab = null) {
   let tabs = await chrome.tabs.query({ url: flowUrls });
+  if (preferredTab?.id) {
+    const found = tabs.find((t) => t.id === preferredTab.id);
+    if (found) {
+      tabs = [found, ...tabs.filter((t) => t.id !== preferredTab.id)];
+    }
+  }
 
   // No Flow tab at all — spawn one and let it settle. Keep the exact tab id:
   // a redirected or stale tab must not make us select some older candidate.
@@ -466,14 +474,32 @@ const MAX_RPC_TEXT = 32000000; // the project listing alone is past 17 MB
 
 async function runBatchRpc(cmd) {
   const tabs = await chrome.tabs.query({ url: flowUrls });
-  let candidate = tabs.find((t) => !t.discarded) || tabs[0];
+  const projectMatch = cmd.freq ? cmd.freq.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) : null;
+  const targetProjectId = projectMatch ? projectMatch[0].toLowerCase() : null;
+
+  let candidate = null;
+  if (targetProjectId) {
+    candidate = tabs.find((t) => !t.discarded && t.url && t.url.toLowerCase().includes(targetProjectId));
+  }
+  if (!candidate) {
+    candidate = tabs.find((t) => !t.discarded && t.url && t.url.includes('/project/'));
+  }
+  if (!candidate) {
+    candidate = tabs.find((t) => !t.discarded) || tabs[0];
+  }
   if (!candidate) {
     // No Flow tab — open one and give the app a moment to boot, otherwise
     // WIZ_global_data is not on the page yet and `at` comes back empty. Keep
     // the exact created tab id so redirects/stale tabs cannot hijack recovery.
     let opened;
     try {
-      opened = await chrome.tabs.create({ url: FLOW_TAB_URL, active: false });
+      const uTab = tabs.find((t) => t.url && t.url.includes('/u/'));
+      const uTabMatch = uTab?.url?.match(/\/u\/\d+/);
+      const openPrefix = uTabMatch ? uTabMatch[0] : '';
+      const openUrl = targetProjectId
+        ? `https://flow.google.com${openPrefix}/project/${targetProjectId}`
+        : `${FLOW_TAB_URL}${openPrefix ? openPrefix.slice(1) + '/' : ''}`;
+      opened = await chrome.tabs.create({ url: openUrl, active: false });
       await sleep(5000);
       candidate = opened?.id ? await chrome.tabs.get(opened.id).catch(() => null) : null;
     } catch (e) {
@@ -487,7 +513,7 @@ async function runBatchRpc(cmd) {
 
   let freq = cmd.freq;
   if (cmd.captchaAction) {
-    const solved = await solveCaptcha(cmd.id, cmd.captchaAction);
+    const solved = await solveCaptcha(cmd.id, cmd.captchaAction, tab);
     if (!solved?.token) return { error: `CAPTCHA_FAILED: ${solved?.error || 'no token'}` };
     freq = freq.split(CAPTCHA_SLOT).join(solved.token);
   }
@@ -503,12 +529,18 @@ async function runBatchRpc(cmd) {
       const bl = wiz.cfb2h;
       if (!at) return { error: 'NO_AT_TOKEN' };
       const reqid = Math.floor(Math.random() * 900000) + 100000;
-      // Match Flow's own WIZ metadata. GEM_PIX_2 (Nano Banana Pro) rejects
-      // image generation when source-path is missing even though Lite may not.
-      const sourcePath = location.pathname || '/';
+      // Match Flow's own WIZ metadata and multi-account URL structure (/u/1, /u/2, etc.).
+      // In multi-account sessions, missing the /u/<N> prefix routes to /u/0 and returns HTTP 400.
+      const uMatch = (location.pathname || '').match(/^\/u\/\d+/);
+      const uPrefix = uMatch ? uMatch[0] : '';
+      let sourcePath = location.pathname || '/';
+      const pMatch = freqStr.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (pMatch && (!sourcePath || sourcePath === '/' || !sourcePath.includes(pMatch[0]))) {
+        sourcePath = `${uPrefix}/project/${pMatch[0]}`;
+      }
       const hl = (document.documentElement.lang || navigator.language || 'en').split('-')[0];
       const url =
-        `/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=${encodeURIComponent(rpcid)}` +
+        `${uPrefix}/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=${encodeURIComponent(rpcid)}` +
         `&source-path=${encodeURIComponent(sourcePath)}` +
         `&bl=${encodeURIComponent(bl || '')}&f.sid=${encodeURIComponent(sid || '')}` +
         `&hl=${encodeURIComponent(hl)}&_reqid=${reqid}&rt=c`;
@@ -572,10 +604,19 @@ async function handleBatchRpc(msg) {
 
   try {
     const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match });
-    if (out.error) {
-      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = out.error; }
-      if (visible) updateRequestLog(id, { status: 'failed', error: out.error });
-      sendToAgent({ id, status: 502, error: out.error });
+    const isHttpError = typeof out.status === 'number' && out.status >= 400;
+    if (out.error || isHttpError) {
+      const err = out.error || `HTTP_${out.status}`;
+      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = err; }
+      if (visible) {
+        updateRequestLog(id, {
+          status: 'failed',
+          httpStatus: out.status,
+          error: err,
+          responseSummary: (out.text || '').slice(0, 300),
+        });
+      }
+      sendToAgent({ id, status: out.status || 502, error: err, data: out.text });
     } else {
       if (hasCaptcha) { metrics.successCount++; metrics.lastError = null; }
       if (visible) {

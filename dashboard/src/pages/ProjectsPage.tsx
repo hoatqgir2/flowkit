@@ -8,6 +8,9 @@ import type { TranslationKey } from '../i18n/translations'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction, CardFooter } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { Button } from '../components/ui/button'
+import { Plus } from 'lucide-react'
+import CreateProjectDialog from '../components/projects/CreateProjectDialog'
 
 type FilterTab = 'ACTIVE' | 'ARCHIVED' | 'ALL'
 
@@ -53,6 +56,7 @@ export default function ProjectsPage() {
   const [tab, setTab] = useState<FilterTab>('ACTIVE')
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(false)
 
   useEffect(() => {
     fetchAPI<Project[]>('/api/projects')
@@ -73,21 +77,40 @@ export default function ProjectsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3">
-        <Tabs value={tab} onValueChange={v => setTab(v as FilterTab)}>
-          <TabsList>
-            <TabsTrigger value="ACTIVE">{t('projects.tab.active')}</TabsTrigger>
-            <TabsTrigger value="ARCHIVED">{t('projects.tab.archived')}</TabsTrigger>
-            <TabsTrigger value="ALL">{t('projects.tab.all')}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <span className="ml-auto text-[11px]" style={{ color: 'var(--muted)' }}>{t('projects.count', { n: filtered.length })}</span>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Tabs value={tab} onValueChange={v => setTab(v as FilterTab)}>
+            <TabsList>
+              <TabsTrigger value="ACTIVE">{t('projects.tab.active')}</TabsTrigger>
+              <TabsTrigger value="ARCHIVED">{t('projects.tab.archived')}</TabsTrigger>
+              <TabsTrigger value="ALL">{t('projects.tab.all')}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <span className="text-[11px]" style={{ color: 'var(--muted)' }}>
+            {t('projects.count', { n: filtered.length })}
+          </span>
+        </div>
+
+        <Button
+          size="sm"
+          onClick={() => setCreateOpen(true)}
+          className="gap-1.5 font-medium cursor-pointer"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>Tạo dự án mới</span>
+        </Button>
       </div>
 
       {loading ? (
         <div className="text-xs" style={{ color: 'var(--muted)' }}>{t('projects.loading')}</div>
       ) : filtered.length === 0 ? (
-        <div className="text-xs" style={{ color: 'var(--muted)' }}>{t(`projects.empty.${tab}` as TranslationKey)}</div>
+        <div className="flex flex-col items-center justify-center p-8 rounded-lg border border-dashed gap-3" style={{ borderColor: 'var(--border)' }}>
+          <div className="text-xs" style={{ color: 'var(--muted)' }}>{t(`projects.empty.${tab}` as TranslationKey)}</div>
+          <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)} className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" />
+            <span>Tạo dự án đầu tiên</span>
+          </Button>
+        </div>
       ) : (
         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
           {filtered.map(p => (
@@ -95,6 +118,15 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
+
+      <CreateProjectDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(newProj) => {
+          setProjects(prev => [newProj, ...prev])
+          navigate(`/projects/${newProj.id}?tab=pipeline`)
+        }}
+      />
     </div>
   )
 }
