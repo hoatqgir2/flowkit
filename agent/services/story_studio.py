@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from agent.config import BASE_DIR, OUTPUT_DIR
+from agent.config import BASE_DIR, OUTPUT_DIR, GROQ_API_KEY, GROQ_BASE_URL, GROQ_WHISPER_MODEL
 from agent.services.flow_client import get_flow_client
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,28 @@ def get_project(project_id: str) -> Optional[Dict[str, Any]]:
     if pfile.exists():
         try:
             with open(pfile, "r", encoding="utf-8") as f:
-                return json.load(f)
+                proj = json.load(f)
+
+            needs_save = False
+            # Auto-recover narration.mp3 if it exists on disk but audio_url is missing
+            audio_file = pdir / "narration.mp3"
+            if audio_file.exists() and not proj.get("audio_url"):
+                proj["audio_url"] = f"/output/story_studio/{project_id}/narration.mp3?t={int(audio_file.stat().st_mtime)}"
+                if not proj.get("audio_duration"):
+                    proj["audio_duration"] = get_audio_duration(audio_file)
+                proj["current_stage"] = max(proj.get("current_stage", 1), 3)
+                needs_save = True
+
+            # Auto-recover character_ref.png if it exists on disk but character_image_url is missing
+            char_file = pdir / "character_ref.png"
+            if char_file.exists() and not proj.get("character_image_url"):
+                proj["character_image_url"] = f"/output/story_studio/{project_id}/character_ref.png?t={int(char_file.stat().st_mtime)}"
+                needs_save = True
+
+            if needs_save:
+                save_project(proj)
+
+            return proj
         except Exception as e:
             logger.error("Failed to read project %s: %s", project_id, e)
     return None
@@ -479,6 +500,7 @@ async def generate_minimax_audio(
         "model": model,
         "speed": speed,
     }
+    proj["current_stage"] = max(proj.get("current_stage", 1), 3)
     save_project(proj)
 
     return {
@@ -499,6 +521,7 @@ def save_custom_audio(project_id: str, file_bytes: bytes, filename: str) -> Dict
     proj["audio_url"] = rel_url
     proj["audio_duration"] = duration
     proj["tts_provider"] = "custom_upload"
+    proj["current_stage"] = max(proj.get("current_stage", 1), 3)
     save_project(proj)
 
     return {"audio_url": rel_url, "duration": duration, "file_size": len(file_bytes)}
@@ -522,6 +545,142 @@ def format_timestamp(seconds: float) -> str:
     m = int(seconds // 60)
     s = int(seconds % 60)
     return f"[{m}:{s:02d}]"
+
+
+async def transcribe_with_groq(
+    project_id: str,
+    api_key: str = "",
+    model: str = "",
+) -> List[Dict[str, Any]]:
+    """Transcribe project narration audio via Groq Whisper API (whisper-large-v3) with exact timestamps."""
+    pdir = get_project_dir(project_id)
+    audio_path = pdir / "narration.mp3"
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Chưa tìm thấy file narration.mp3 trong dự án {project_id}. Hãy tạo hoặc tải lên audio ở Bước 3 trước.")
+
+    key = (api_key or GROQ_API_KEY or "").strip()
+    if not key:
+        raise ValueError("Chưa có Groq API Key. Vui lòng thêm GROQ_API_KEY vào .env hoặc nhập trực tiếp.")
+
+    whisper_model = model or GROQ_WHISPER_MODEL or "whisper-large-v3"
+    url = f"{GROQ_BASE_URL.rstrip('/')}/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {key}"}
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        with open(audio_path, "rb") as f:
+            files = {"file": (audio_path.name, f, "audio/mpeg")}
+            data = {
+                "model": whisper_model,
+                "response_format": "verbose_json",
+                "timestamp_granularities[]": ["segment", "word"],
+            }
+            resp = await client.post(url, headers=headers, files=files, data=data)
+            if resp.status_code != 200:
+                raise RuntimeError(f"Groq Whisper API lỗi (HTTP {resp.status_code}): {resp.text[:300]}")
+            result = resp.json()
+
+    words = result.get("words", [])
+    segments = result.get("segments", [])
+    if not segments and not words:
+        raise RuntimeError("Groq Whisper không trả về phân đoạn (segments) âm thanh nào.")
+
+    proj = get_project(project_id) or {}
+    script_text = proj.get("script_text", "").strip()
+    dur = get_audio_duration(audio_path)
+    items: List[Dict[str, Any]] = []
+
+    # 1. If script exists, align each script sentence to exact Whisper word timestamps
+    if script_text and words:
+        text_clean = script_text.replace("\r\n", "\n")
+        raw_sentences = re.split(r"(?<=[.!?])\s+|\n+", text_clean)
+        sentences = [s.strip() for s in raw_sentences if s.strip()]
+
+        def clean_tok(w: str) -> str:
+            return re.sub(r"[^\w]", "", w).lower()
+
+        word_idx = 0
+        for idx, s in enumerate(sentences):
+            s_tokens = [clean_tok(w) for w in s.split() if clean_tok(w)]
+            if not s_tokens:
+                continue
+
+            start_s = None
+            end_s = None
+
+            search_limit = min(len(words), word_idx + 80)
+            for i in range(word_idx, search_limit):
+                if clean_tok(words[i].get("word", "")) == s_tokens[0]:
+                    check_len = min(len(s_tokens), 3)
+                    matched = True
+                    for k in range(check_len):
+                        if i + k >= len(words) or clean_tok(words[i + k].get("word", "")) != s_tokens[k]:
+                            matched = False
+                            break
+                    if matched:
+                        start_s = round(float(words[i]["start"]), 2)
+                        end_token_idx = min(len(words) - 1, i + len(s_tokens) - 1)
+                        end_s = round(float(words[end_token_idx]["end"]), 2)
+                        word_idx = i + len(s_tokens)
+                        break
+
+            items.append({
+                "id": idx + 1,
+                "timestamp_str": format_timestamp(start_s) if start_s is not None else "[--:--]",
+                "start_s": start_s,
+                "end_s": end_s,
+                "duration": round(end_s - start_s, 2) if (start_s is not None and end_s is not None) else 3.0,
+                "text": s,
+            })
+
+        # Interpolate any missing timestamps between known points
+        for i in range(len(items)):
+            if items[i]["start_s"] is None:
+                prev_s = items[i - 1]["end_s"] if i > 0 and items[i - 1]["end_s"] is not None else 0.0
+                next_s = None
+                for j in range(i + 1, len(items)):
+                    if items[j]["start_s"] is not None:
+                        next_s = items[j]["start_s"]
+                        break
+                next_s = next_s or dur
+                items[i]["start_s"] = round(prev_s, 2)
+                items[i]["end_s"] = round(next_s, 2)
+                items[i]["duration"] = round(max(1.0, items[i]["end_s"] - items[i]["start_s"]), 2)
+                items[i]["timestamp_str"] = format_timestamp(items[i]["start_s"])
+
+        # Contiguous alignment: link end_s to next start_s for smooth playback
+        for i in range(len(items) - 1):
+            items[i]["end_s"] = items[i + 1]["start_s"]
+            items[i]["duration"] = round(items[i]["end_s"] - items[i]["start_s"], 2)
+
+        if items:
+            items[-1]["end_s"] = round(dur, 2)
+            items[-1]["duration"] = round(max(1.0, items[-1]["end_s"] - items[-1]["start_s"]), 2)
+
+    # 2. Fallback to Whisper's own segments if no script
+    if not items and segments:
+        for idx, seg in enumerate(segments):
+            start_s = round(float(seg.get("start", 0.0)), 2)
+            end_s = round(float(seg.get("end", start_s + 3.0)), 2)
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            items.append({
+                "id": idx + 1,
+                "timestamp_str": format_timestamp(start_s),
+                "start_s": start_s,
+                "end_s": end_s,
+                "duration": round(max(0.5, end_s - start_s), 2),
+                "text": text,
+            })
+        for i in range(len(items) - 1):
+            if items[i]["end_s"] < items[i + 1]["start_s"]:
+                items[i]["end_s"] = items[i + 1]["start_s"]
+                items[i]["duration"] = round(items[i]["end_s"] - items[i]["start_s"], 2)
+        if items and dur > items[-1]["end_s"]:
+            items[-1]["end_s"] = round(dur, 2)
+            items[-1]["duration"] = round(items[-1]["end_s"] - items[-1]["start_s"], 2)
+
+    return items
 
 
 def parse_or_segment_transcript(
@@ -659,6 +818,7 @@ async def generate_single_scene_image(
     character_media_id: str = "",
     flow_project_id: str = "",
     image_model: str = "NARWHAL",
+    timeout_seconds: float = 60.0,
 ) -> Dict[str, Any]:
     """Generate image for a scene and save locally."""
     client = get_flow_client()
@@ -670,14 +830,20 @@ async def generate_single_scene_image(
     effective_char_id = character_media_id or proj.get("character_media_id", "")
     refs = [effective_char_id] if effective_char_id else []
 
-    res = await client.generate_images(
-        prompt=prompt,
-        project_id=pid,
-        character_media_ids=refs,
-        aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
-        image_model=image_model,
-        count=1,
-    )
+    try:
+        res = await asyncio.wait_for(
+            client.generate_images(
+                prompt=prompt,
+                project_id=pid,
+                character_media_ids=refs,
+                aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+                image_model=image_model,
+                count=1,
+            ),
+            timeout=float(timeout_seconds or 60.0),
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"Tạo ảnh cảnh {scene_id} quá {int(timeout_seconds)}s (Timeout) - coi như thất bại.")
 
     if res.get("status", 200) >= 400 or res.get("error"):
         err_msg = str(res.get("error") or "Flow image generation failed")

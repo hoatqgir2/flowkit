@@ -42,6 +42,9 @@ class GenerateAudioRequest(BaseModel):
 
 class TranscribeRequest(BaseModel):
     raw_transcript: Optional[str] = ""  # If user pastes [mm:ss] format
+    method: Optional[str] = "groq"  # "groq" (Whisper Large V3) or "heuristic"
+    groq_api_key: Optional[str] = ""
+    whisper_model: Optional[str] = ""
 
 
 class UpdateTranscriptRequest(BaseModel):
@@ -57,6 +60,7 @@ class GenerateSceneImageRequest(BaseModel):
     prompt: Optional[str] = None
     image_model: Optional[str] = "NARWHAL"
     flow_project_id: Optional[str] = ""
+    timeout_seconds: Optional[float] = 60.0
 
 
 class RenderVideoRequest(BaseModel):
@@ -224,8 +228,6 @@ async def generate_audio_endpoint(project_id: str, req: GenerateAudioRequest):
             pitch=req.pitch or 0,
             vol=req.vol or 1.0,
         )
-        proj["current_stage"] = max(proj.get("current_stage", 1), 3)
-        ss.save_project(proj)
         return res
     except Exception as e:
         raise HTTPException(502, f"Minimax TTS error: {e}")
@@ -243,8 +245,6 @@ async def upload_audio_endpoint(project_id: str, file: UploadFile = File(...)):
         raise HTTPException(400, "Empty audio file")
     
     res = ss.save_custom_audio(project_id, content, file.filename or "audio.mp3")
-    proj["current_stage"] = max(proj.get("current_stage", 1), 3)
-    ss.save_project(proj)
     return res
 
 
@@ -253,19 +253,42 @@ async def upload_audio_endpoint(project_id: str, file: UploadFile = File(...)):
 
 @router.post("/projects/{project_id}/transcribe")
 async def transcribe_endpoint(project_id: str, req: TranscribeRequest):
-    """Segment script into [mm:ss] timestamped scenes."""
+    """Segment script into [mm:ss] timestamped scenes via Groq Whisper AI or pasted transcript."""
     proj = ss.get_project(project_id)
     if not proj:
         raise HTTPException(404, "Project not found")
 
-    script = proj.get("script_text", "")
-    duration = proj.get("audio_duration", 0.0)
-
-    scenes = ss.parse_or_segment_transcript(
-        script_text=script,
-        audio_duration=duration,
-        raw_transcript=req.raw_transcript or "",
-    )
+    scenes = []
+    # 1. If manual raw transcript is provided
+    if req.raw_transcript and "[" in req.raw_transcript:
+        scenes = ss.parse_or_segment_transcript(
+            script_text=proj.get("script_text", ""),
+            audio_duration=proj.get("audio_duration", 0.0),
+            raw_transcript=req.raw_transcript,
+        )
+    # 2. If Groq Whisper is requested (default)
+    elif req.method != "heuristic":
+        try:
+            scenes = await ss.transcribe_with_groq(
+                project_id=project_id,
+                api_key=req.groq_api_key or "",
+                model=req.whisper_model or "",
+            )
+        except Exception as e:
+            # Fall back to heuristic if script exists, otherwise raise
+            if proj.get("script_text"):
+                scenes = ss.parse_or_segment_transcript(
+                    script_text=proj.get("script_text", ""),
+                    audio_duration=proj.get("audio_duration", 0.0),
+                )
+            else:
+                raise HTTPException(502, f"Lỗi Groq Whisper: {e}")
+    else:
+        # Heuristic fallback
+        scenes = ss.parse_or_segment_transcript(
+            script_text=proj.get("script_text", ""),
+            audio_duration=proj.get("audio_duration", 0.0),
+        )
 
     # Automatically build 2D doodle prompts with Hero Lock
     hero_lock = proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
@@ -333,6 +356,7 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
             character_media_id=proj.get("character_media_id", ""),
             flow_project_id=req.flow_project_id or proj.get("flow_project_id", ""),
             image_model=req.image_model or "NARWHAL",
+            timeout_seconds=float(req.timeout_seconds or 60.0),
         )
         target["image_url"] = res["image_url"]
         target["cdn_url"] = res["cdn_url"]

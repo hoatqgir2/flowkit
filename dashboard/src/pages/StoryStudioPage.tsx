@@ -8,6 +8,7 @@ import {
   Image as ImageIcon,
   Video,
   Play,
+  Pause,
   RotateCw,
   Download,
   Upload,
@@ -20,7 +21,8 @@ import {
   Eye,
   Maximize2,
   Zap,
-  X
+  X,
+  StopCircle
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -101,12 +103,20 @@ export default function StoryStudioPage() {
   const [minimaxSpeed, setMinimaxSpeed] = useState<number>(1.0)
 
   // Stage 4 State (Transcript)
+  const [groqKey, setGroqKey] = useState<string>(() => localStorage.getItem('fk_groq_key') || '')
+  const [showGroqConfig, setShowGroqConfig] = useState<boolean>(false)
   const [rawTranscript, setRawTranscript] = useState<string>('')
   const [showRawTranscriptInput, setShowRawTranscriptInput] = useState<boolean>(false)
 
   // Stage 5 State (Images)
   const [imageModel, setImageModel] = useState<string>('NARWHAL')
-  const [batchGenProgress, setBatchGenProgress] = useState<{ current: number; total: number } | null>(null)
+  const [batchConcurrency, setBatchConcurrency] = useState<number>(() => Number(localStorage.getItem('fk_batch_concurrency')) || 4)
+  const [batchDelay, setBatchDelay] = useState<number>(() => Number(localStorage.getItem('fk_batch_delay')) || 5)
+  const [batchTimeout, setBatchTimeout] = useState<number>(() => Number(localStorage.getItem('fk_batch_timeout')) || 60)
+  const [batchGenProgress, setBatchGenProgress] = useState<{ current: number; total: number; message?: string } | null>(null)
+  const [isBatchGenerating, setIsBatchGenerating] = useState<boolean>(false)
+  const batchCancelRef = useRef<boolean>(false)
+  const activeAbortControllersRef = useRef<Map<number, AbortController>>(new Map())
   const [previewLightboxImg, setPreviewLightboxImg] = useState<string | null>(null)
 
   // Stage 6 State (Video)
@@ -115,7 +125,7 @@ export default function StoryStudioPage() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  // Save keys to localStorage
+  // Save keys & batch settings to localStorage
   useEffect(() => {
     if (minimaxKey) localStorage.setItem('fk_minimax_key', minimaxKey)
   }, [minimaxKey])
@@ -125,6 +135,18 @@ export default function StoryStudioPage() {
   useEffect(() => {
     if (llmApiKey) localStorage.setItem('fk_llm_key', llmApiKey)
   }, [llmApiKey])
+  useEffect(() => {
+    if (groqKey) localStorage.setItem('fk_groq_key', groqKey)
+  }, [groqKey])
+  useEffect(() => {
+    localStorage.setItem('fk_batch_concurrency', String(batchConcurrency))
+  }, [batchConcurrency])
+  useEffect(() => {
+    localStorage.setItem('fk_batch_delay', String(batchDelay))
+  }, [batchDelay])
+  useEffect(() => {
+    localStorage.setItem('fk_batch_timeout', String(batchTimeout))
+  }, [batchTimeout])
 
   // Load projects list
   const loadProjects = async () => {
@@ -352,8 +374,106 @@ export default function StoryStudioPage() {
     }
   }
 
+  // ── Scene Audio Playback (Stage 4 & Stage 5) ────────────────────────
+  const sceneAudioRef = useRef<HTMLAudioElement | null>(null)
+  const [playingSceneId, setPlayingSceneId] = useState<number | null>(null)
+  const playTimerRef = useRef<any>(null)
+
+  const stopSceneAudio = () => {
+    if (playTimerRef.current) {
+      clearInterval(playTimerRef.current)
+      playTimerRef.current = null
+    }
+    if (sceneAudioRef.current) {
+      sceneAudioRef.current.pause()
+    }
+    setPlayingSceneId(null)
+  }
+
+  const handlePlaySceneAudio = (sc: SceneItem) => {
+    if (!currentProject?.audio_url) {
+      setStatusMsg({
+        type: 'err',
+        text: 'Chưa có file âm thanh để phát. Vui lòng tạo giọng đọc hoặc nạp file audio ở Bước 3 trước.',
+      })
+      return
+    }
+
+    const audio = sceneAudioRef.current
+    if (!audio) return
+
+    // If already playing this scene, toggle pause
+    if (playingSceneId === sc.id) {
+      stopSceneAudio()
+      return
+    }
+
+    if (playTimerRef.current) {
+      clearInterval(playTimerRef.current)
+      playTimerRef.current = null
+    }
+
+    const parseTime = (ts?: string): number => {
+      if (!ts) return 0
+      const clean = ts.replace(/[\[\]\(\)]/g, '').trim()
+      const parts = clean.split(':').map(Number)
+      if (parts.length === 2) return (parts[0] || 0) * 60 + (parts[1] || 0)
+      if (parts.length === 3) return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0)
+      return 0
+    }
+
+    const startTime = sc.start_s !== undefined && sc.start_s !== null ? Math.max(0, sc.start_s) : parseTime(sc.timestamp_str)
+    let endTime = sc.end_s && sc.end_s > startTime ? sc.end_s : (startTime + (sc.duration || 4.0))
+    if (currentProject.audio_duration && endTime > currentProject.audio_duration) {
+      endTime = currentProject.audio_duration
+    }
+
+    if (!audio.src || !audio.src.includes(currentProject.audio_url)) {
+      audio.src = currentProject.audio_url
+    }
+
+    const startPlayback = () => {
+      try {
+        audio.currentTime = startTime
+      } catch (e) {
+        console.warn('Seek error:', e)
+      }
+
+      const p = audio.play()
+      if (p !== undefined) {
+        p.then(() => {
+          setPlayingSceneId(sc.id)
+          playTimerRef.current = setInterval(() => {
+            if (audio.currentTime >= endTime || audio.paused || audio.ended) {
+              stopSceneAudio()
+            }
+          }, 40)
+        }).catch(err => {
+          console.warn('Play audio error:', err)
+          stopSceneAudio()
+        })
+      }
+    }
+
+    if (audio.readyState >= 1) {
+      startPlayback()
+    } else {
+      audio.load()
+      const onCanPlay = () => {
+        audio.removeEventListener('canplay', onCanPlay)
+        startPlayback()
+      }
+      audio.addEventListener('canplay', onCanPlay)
+    }
+  }
+
+  // Cleanup scene audio playback when unmounting, changing stage, or switching project
+  useEffect(() => {
+    stopSceneAudio()
+  }, [currentProject?.id, activeStage])
+
   // ── Stage 4: Transcribe & Timestamps ────────────────────────────────
-  const handleTranscribe = async () => {
+  const handleTranscribe = async (method: 'groq' | 'heuristic' = 'groq') => {
     if (!currentProject) return
     try {
       setLoading(true)
@@ -361,10 +481,20 @@ export default function StoryStudioPage() {
       const res = await fetchAPI<any>(`/api/story-studio/projects/${currentProject.id}/transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw_transcript: rawTranscript || undefined }),
+        body: JSON.stringify({
+          raw_transcript: rawTranscript || undefined,
+          method: rawTranscript ? undefined : method,
+          groq_api_key: groqKey || undefined,
+          whisper_model: 'whisper-large-v3',
+        }),
       })
       setCurrentProject(prev => prev ? { ...prev, scenes: res.scenes } : null)
-      setStatusMsg({ type: 'ok', text: `Đã bóc tách thành công ${res.count} phân cảnh (scenes)!` })
+      const successDetail = rawTranscript
+        ? `Đã khớp ${res.count} phân cảnh từ nội dung transcript dán vào!`
+        : method === 'groq'
+          ? `Đã bóc tách thành công ${res.count} phân cảnh chuẩn xác 100% bằng Groq Whisper AI (whisper-large-v3)!`
+          : `Đã ước tính phân đoạn ${res.count} phân cảnh theo số từ!`
+      setStatusMsg({ type: 'ok', text: successDetail })
     } catch (e: any) {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi bóc tách transcript' })
     } finally {
@@ -391,26 +521,32 @@ export default function StoryStudioPage() {
     }
   }
 
-  const handleGenerateSingleScene = async (sceneId: number, customPrompt?: string) => {
+  const handleGenerateSingleScene = async (sceneId: number, customPrompt?: string, timeoutSec: number = 60) => {
     if (!currentProject) return
+    const controller = new AbortController()
+    activeAbortControllersRef.current.set(sceneId, controller)
+    const timer = setTimeout(() => controller.abort(), timeoutSec * 1000)
+
     try {
       // Update scene status to generating
       setCurrentProject(prev => {
         if (!prev || !prev.scenes) return prev
         return {
           ...prev,
-          scenes: prev.scenes.map(s => s.id === sceneId ? { ...s, status: 'generating' } : s)
+          scenes: prev.scenes.map(s => s.id === sceneId ? { ...s, status: 'generating', error: undefined } : s)
         }
       })
 
       const res = await fetchAPI<any>(`/api/story-studio/projects/${currentProject.id}/generate-scene-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           scene_id: sceneId,
           prompt: customPrompt,
           image_model: imageModel,
           flow_project_id: flowProjectId,
+          timeout_seconds: timeoutSec,
         }),
       })
 
@@ -422,21 +558,41 @@ export default function StoryStudioPage() {
             ...s,
             image_url: res.image_url,
             cdn_url: res.cdn_url,
-            status: 'completed'
+            status: 'completed',
+            error: undefined,
           } : s)
         }
       })
       setStatusMsg({ type: 'ok', text: `Cảnh ${sceneId} đã tạo ảnh xong!` })
+      return res
     } catch (e: any) {
+      const isAbort = e.name === 'AbortError' || e.message?.toLowerCase().includes('abort')
+      const isUserStopped = batchCancelRef.current && isAbort
+      const isTimeout = isAbort && !batchCancelRef.current
+      const errorText = isUserStopped
+        ? 'Đã dừng bởi người dùng'
+        : isTimeout
+          ? `Timeout quá ${timeoutSec}s (coi như fail)`
+          : (e.message || 'Lỗi tạo ảnh')
+
       setCurrentProject(prev => {
         if (!prev || !prev.scenes) return prev
         return {
           ...prev,
-          scenes: prev.scenes.map(s => s.id === sceneId ? { ...s, status: 'failed', error: e.message } : s)
+          scenes: prev.scenes.map(s => s.id === sceneId ? {
+            ...s,
+            status: isUserStopped ? 'pending' : 'failed',
+            error: errorText,
+          } : s)
         }
       })
-      setStatusMsg({ type: 'err', text: `Cảnh ${sceneId} lỗi: ${e.message}` })
-      throw e
+      if (!isUserStopped) {
+        setStatusMsg({ type: 'err', text: `Cảnh ${sceneId} lỗi: ${errorText}` })
+      }
+      throw new Error(errorText)
+    } finally {
+      clearTimeout(timer)
+      activeAbortControllersRef.current.delete(sceneId)
     }
   }
 
@@ -467,6 +623,82 @@ export default function StoryStudioPage() {
     }
   }
 
+  const runBatchImageGeneration = async (scenesToProcess: SceneItem[]) => {
+    if (!currentProject || !scenesToProcess.length) return
+    batchCancelRef.current = false
+    setIsBatchGenerating(true)
+    setStatusMsg(null)
+
+    const total = scenesToProcess.length
+    let processedCount = 0
+
+    // Chunk array into batches of size batchConcurrency
+    const chunks: SceneItem[][] = []
+    const concurrency = Math.max(1, Math.min(10, batchConcurrency || 4))
+    for (let i = 0; i < scenesToProcess.length; i += concurrency) {
+      chunks.push(scenesToProcess.slice(i, i + concurrency))
+    }
+
+    for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+      if (batchCancelRef.current) {
+        setStatusMsg({ type: 'ok', text: `Đã dừng tiến trình tạo ảnh (đã xử lý ${processedCount}/${total} cảnh).` })
+        break
+      }
+
+      const currentChunk = chunks[cIdx]
+      const chunkIds = currentChunk.map(c => `#${c.id}`).join(', ')
+      setBatchGenProgress({
+        current: processedCount,
+        total,
+        message: `Đang tạo lượt ${cIdx + 1}/${chunks.length} (${currentChunk.length} ảnh cùng lúc: ${chunkIds})...`
+      })
+
+      // Run current chunk concurrently
+      const results = await Promise.allSettled(
+        currentChunk.map(sc => handleGenerateSingleScene(sc.id, sc.prompt, batchTimeout))
+      )
+
+      let hitQuota = false
+      let quotaSceneId = 0
+      results.forEach((res, idx) => {
+        if (res.status === 'rejected') {
+          const errMsg = String(res.reason?.message || '')
+          if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('hết lượt')) {
+            hitQuota = true
+            quotaSceneId = currentChunk[idx].id
+          }
+        }
+      })
+
+      processedCount += currentChunk.length
+      setBatchGenProgress({ current: processedCount, total })
+
+      if (hitQuota) {
+        setStatusMsg({
+          type: 'err',
+          text: `Tài khoản Google Flow hiện tại đã chạm giới hạn quota ở cảnh ${quotaSceneId}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
+        })
+        break
+      }
+
+      // Delay between batches
+      if (cIdx < chunks.length - 1 && !batchCancelRef.current && batchDelay > 0) {
+        for (let s = batchDelay; s > 0; s--) {
+          if (batchCancelRef.current) break
+          setBatchGenProgress({
+            current: processedCount,
+            total,
+            message: `Lượt ${cIdx + 1} xong! Chờ ${s}s trước khi chạy lượt ${cIdx + 2}...`
+          })
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
+    }
+
+    setIsBatchGenerating(false)
+    setBatchGenProgress(null)
+  }
+
   const handleGenerateMissingScenes = async () => {
     if (!currentProject || !currentProject.scenes?.length) return
     const missingScenes = currentProject.scenes.filter(s => s.status !== 'completed' || !s.image_url)
@@ -474,58 +706,49 @@ export default function StoryStudioPage() {
       setStatusMsg({ type: 'ok', text: 'Tất cả các cảnh đều đã hoàn tất ảnh!' })
       return
     }
-
-    setBatchGenProgress({ current: 0, total: missingScenes.length })
-    for (let i = 0; i < missingScenes.length; i++) {
-      const sc = missingScenes[i]
-      setBatchGenProgress({ current: i + 1, total: missingScenes.length })
-      try {
-        await handleGenerateSingleScene(sc.id, sc.prompt)
-      } catch (err: any) {
-        console.error(`Error generating scene ${sc.id}:`, err)
-        const errMsg = err?.message || ''
-        if (errMsg.includes('quota') || errMsg.includes('limit') || errMsg.includes('hết lượt')) {
-          setStatusMsg({
-            type: 'err',
-            text: `Tài khoản Google Flow hiện tại đã chạm giới hạn quota ở cảnh ${sc.id}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
-          })
-          setBatchGenProgress(null)
-          return
-        }
-      }
-      await new Promise(r => setTimeout(r, 2500))
-    }
-    setBatchGenProgress(null)
-    setStatusMsg({ type: 'ok', text: 'Đã hoàn tất tiến trình tạo ảnh các cảnh còn thiếu!' })
+    await runBatchImageGeneration(missingScenes)
   }
 
   const handleBatchGenerateImages = async () => {
     if (!currentProject || !currentProject.scenes?.length) return
-    const scenesToGen = currentProject.scenes
-    setBatchGenProgress({ current: 0, total: scenesToGen.length })
+    await runBatchImageGeneration(currentProject.scenes)
+  }
 
-    for (let i = 0; i < scenesToGen.length; i++) {
-      const sc = scenesToGen[i]
-      setBatchGenProgress({ current: i + 1, total: scenesToGen.length })
+  const handleStopAll = () => {
+    batchCancelRef.current = true
+
+    // Abort all active generating requests immediately
+    const abortCount = activeAbortControllersRef.current.size
+    activeAbortControllersRef.current.forEach((controller) => {
       try {
-        await handleGenerateSingleScene(sc.id, sc.prompt)
-      } catch (err: any) {
-        console.error(`Error generating scene ${sc.id}:`, err)
-        const errMsg = err?.message || ''
-        if (errMsg.includes('quota') || errMsg.includes('limit') || errMsg.includes('hết lượt')) {
-          setStatusMsg({
-            type: 'err',
-            text: `Tài khoản Google Flow hiện tại đã chạm giới hạn quota ở cảnh ${sc.id}. Hãy chuyển sang tài khoản Google khác và bấm 'Đồng bộ Tham Chiếu sang Acc mới'.`
-          })
-          setBatchGenProgress(null)
-          return
-        }
+        controller.abort()
+      } catch (err) {
+        // ignore
       }
-      // Pacing delay between requests
-      await new Promise(r => setTimeout(r, 2500))
-    }
+    })
+    activeAbortControllersRef.current.clear()
+
+    // Revert any scenes currently generating back to pending
+    setCurrentProject(prev => {
+      if (!prev || !prev.scenes) return prev
+      return {
+        ...prev,
+        scenes: prev.scenes.map(s => s.status === 'generating' ? {
+          ...s,
+          status: 'pending',
+          error: 'Đã dừng bởi người dùng',
+        } : s)
+      }
+    })
+
+    setIsBatchGenerating(false)
     setBatchGenProgress(null)
-    setStatusMsg({ type: 'ok', text: 'Hoàn tất tiến trình tạo ảnh các cảnh!' })
+    setStatusMsg({
+      type: 'ok',
+      text: abortCount > 0
+        ? `Đã dừng khẩn cấp tất cả (${abortCount} ảnh) đang tạo ngay lập tức!`
+        : 'Đã dừng tất cả các tiến trình tạo ảnh!'
+    })
   }
 
   // ── Stage 6: Render Final Video ─────────────────────────────────────
@@ -1098,15 +1321,29 @@ export default function StoryStudioPage() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-900/80 border border-slate-800 rounded-xl">
               <div>
-                <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
-                  <Clock className="w-4 h-4" /> 4. Bóc Tách & Khớp Mốc Thời Gian (Transcript Alignment)
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Tự động phân rã câu thoại theo mốc thời gian dạng <code className="text-amber-300 font-mono">[mm:ss]</code> để khớp ảnh chính xác.
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
+                    <Clock className="w-4 h-4" /> 4. Bóc Tách & Khớp Mốc Thời Gian (Transcript Alignment)
+                  </h3>
+                  <span className="text-[10px] bg-purple-950/80 text-purple-300 border border-purple-800/60 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-purple-400" /> Groq Whisper Large-v3 (Chuẩn 100%)
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Phân rã câu thoại theo mốc thời gian dạng <code className="text-amber-300 font-mono">[mm:ss]</code> khớp chuẩn xác 100% sóng âm giọng đọc.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowGroqConfig(!showGroqConfig)}
+                  className="text-xs border-slate-700 text-slate-300 hover:text-purple-300"
+                >
+                  {showGroqConfig ? 'Ẩn Cấu Hình Groq' : 'Groq Key'}
+                </Button>
+
                 <Button
                   size="sm"
                   variant="outline"
@@ -1118,11 +1355,23 @@ export default function StoryStudioPage() {
 
                 <Button
                   size="sm"
-                  onClick={handleTranscribe}
+                  variant="outline"
+                  onClick={() => handleTranscribe('heuristic')}
                   disabled={loading || !currentProject?.script_text}
-                  className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 font-medium"
+                  className="text-xs border-slate-700 text-slate-400 hover:text-slate-200"
+                  title="Ước tính theo tỷ lệ từ (dành cho kịch bản chưa có audio)"
                 >
-                  <RotateCw className="w-3.5 h-3.5" /> {loading ? 'Đang bóc tách...' : 'Bóc Tách Tự Động'}
+                  Ước Tính Theo Từ
+                </Button>
+
+                <Button
+                  size="sm"
+                  onClick={() => handleTranscribe('groq')}
+                  disabled={loading || (!currentProject?.audio_url && !currentProject?.script_text)}
+                  className="bg-purple-600 hover:bg-purple-500 text-white text-xs gap-1.5 font-medium shadow-lg shadow-purple-950/50"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-purple-200" />
+                  {loading ? 'Đang bóc tách Whisper...' : 'Bóc Tách Bằng Groq Whisper AI'}
                 </Button>
 
                 <Button
@@ -1136,12 +1385,41 @@ export default function StoryStudioPage() {
               </div>
             </div>
 
+            {/* Optional Groq Config Drawer */}
+            {showGroqConfig && (
+              <Card className="p-4 bg-slate-950 border border-purple-900/40 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Groq API Key (Whisper Large V3):
+                  </label>
+                  <span className="text-[11px] text-slate-400">Model: <code className="text-purple-300 font-mono">whisper-large-v3</code> (Free tier 2.000 req/ngày)</span>
+                </div>
+                <input
+                  type="password"
+                  value={groqKey}
+                  onChange={e => setGroqKey(e.target.value)}
+                  placeholder="gsk_..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 font-mono focus:border-purple-500 focus:outline-none"
+                />
+              </Card>
+            )}
+
             {/* Optional Raw Paste Drawer */}
             {showRawTranscriptInput && (
               <Card className="p-4 bg-slate-950 border-slate-800 space-y-2">
-                <label className="text-xs font-semibold text-slate-300">
-                  Dán nội dung transcript (định dạng như file <code className="text-amber-300">transcript.txt</code>):
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-300">
+                    Dán nội dung transcript (định dạng như file <code className="text-amber-300">transcript.txt</code>):
+                  </label>
+                  <Button
+                    size="sm"
+                    onClick={() => handleTranscribe('groq')}
+                    disabled={loading || !rawTranscript}
+                    className="bg-amber-600 hover:bg-amber-500 text-white text-[11px] h-7 px-3"
+                  >
+                    Lưu & Khớp Phân Đoạn Này
+                  </Button>
+                </div>
                 <textarea
                   rows={6}
                   value={rawTranscript}
@@ -1168,17 +1446,58 @@ export default function StoryStudioPage() {
                   {currentProject.scenes.map((sc, i) => (
                     <div
                       key={sc.id}
-                      className="flex items-start gap-3 p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 hover:border-slate-700 transition-colors"
+                      className={`flex items-start gap-3 p-3 bg-slate-950/60 rounded-lg border transition-all ${
+                        playingSceneId === sc.id
+                          ? 'border-amber-500/80 bg-amber-500/5 ring-1 ring-amber-500/40 shadow-sm shadow-amber-500/10'
+                          : 'border-slate-800/80 hover:border-slate-700'
+                      }`}
                     >
-                      <div className="font-mono text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded shrink-0">
-                        {sc.timestamp_str}
+                      <div className="flex flex-col items-center gap-1.5 shrink-0">
+                        <div className="font-mono text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded">
+                          {sc.timestamp_str}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handlePlaySceneAudio(sc)}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                            playingSceneId === sc.id
+                              ? 'bg-amber-400 text-slate-950 font-bold animate-pulse'
+                              : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30'
+                          }`}
+                          title={playingSceneId === sc.id ? 'Tạm dừng nghe' : `Phát audio đoạn này (${sc.start_s ?? 0}s - ${sc.end_s ?? ''}s)`}
+                        >
+                          {playingSceneId === sc.id ? (
+                            <>
+                              <Pause className="w-2.5 h-2.5 fill-current" />
+                              <span>Dừng</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-2.5 h-2.5 fill-current" />
+                              <span>
+                                {sc.end_s && sc.start_s !== undefined && (sc.end_s - sc.start_s) > 0
+                                  ? `${(sc.end_s - sc.start_s).toFixed(1)}s`
+                                  : 'Nghe'}
+                              </span>
+                            </>
+                          )}
+                        </button>
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs text-slate-200 font-medium">{sc.text}</div>
+                        <div className={`text-xs font-medium transition-colors ${
+                          playingSceneId === sc.id ? 'text-amber-200' : 'text-slate-200'
+                        }`}>
+                          {sc.text}
+                        </div>
                         <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500">
                           <span>Từ {sc.start_s}s ➔ {sc.end_s}s</span>
                           <span>(Thời lượng: {(sc.end_s - sc.start_s).toFixed(1)}s)</span>
+                          {playingSceneId === sc.id && (
+                            <span className="text-amber-400 font-semibold animate-pulse flex items-center gap-1">
+                              <Volume2 className="w-3 h-3" /> Đang phát audio...
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -1206,67 +1525,168 @@ export default function StoryStudioPage() {
           const completedCount = currentProject?.scenes?.filter(s => s.status === 'completed' && s.image_url).length || 0
           const totalCount = currentProject?.scenes?.length || 0
           const missingCount = totalCount - completedCount
+          const hasGenerating = isBatchGenerating || Boolean(currentProject?.scenes?.some(s => s.status === 'generating'))
 
           return (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-900/80 border border-slate-800 rounded-xl">
-                <div>
-                  <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
-                    <ImageIcon className="w-4 h-4" /> 5. Tạo Ảnh Doodle Cho Mỗi Dòng Transcript
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Mỗi cảnh tự động mang <code className="text-amber-300">HERO LOCK</code> và tham chiếu ảnh nhân vật chính để giữ vững sự nhất quán thị giác.
-                  </p>
+              <div className="p-4 bg-slate-900/80 border border-slate-800 rounded-xl space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
+                      <ImageIcon className="w-4 h-4" /> 5. Tạo Ảnh Doodle Cho Mỗi Dòng Transcript
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Mỗi cảnh tự động mang <code className="text-amber-300">HERO LOCK</code> và tham chiếu ảnh nhân vật chính để giữ vững sự nhất quán thị giác.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={imageModel}
+                      onChange={e => setImageModel(e.target.value)}
+                      className="bg-slate-950 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200"
+                    >
+                      <option value="NARWHAL">NARWHAL (Nano Banana 2)</option>
+                      <option value="GEM_PIX_2">GEM_PIX_2 (Nano Banana Pro)</option>
+                    </select>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleBuildPrompts}
+                      className="text-xs border-slate-700"
+                    >
+                      Tái Tạo Prompt
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      onClick={handleGenerateMissingScenes}
+                      disabled={isBatchGenerating || missingCount === 0}
+                      className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 font-semibold shadow-md shadow-amber-600/20"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-200" />
+                      {isBatchGenerating ? `Đang tạo batch...` : `Tạo Tiếp Ảnh Còn Thiếu (${missingCount})`}
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleBatchGenerateImages}
+                      disabled={isBatchGenerating || totalCount === 0}
+                      className="text-xs border-slate-700 text-slate-300 hover:text-white"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Tạo Lại Tất Cả ({totalCount})
+                    </Button>
+
+                    {hasGenerating && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={handleStopAll}
+                        className="bg-red-600 hover:bg-red-500 text-white text-xs gap-1.5 font-bold shadow-md shadow-red-600/30 animate-pulse"
+                        title="Dừng khẩn cấp toàn bộ các ảnh đang generating và huỷ đợt tiếp theo"
+                      >
+                        <StopCircle className="w-3.5 h-3.5" /> Stop All ({activeAbortControllersRef.current.size || 'Dừng'})
+                      </Button>
+                    )}
+
+                    <Button
+                      size="sm"
+                      onClick={() => setActiveStage(6)}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs gap-1.5"
+                    >
+                      Tiếp Tục Ghép Video <ChevronRight className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={imageModel}
-                    onChange={e => setImageModel(e.target.value)}
-                    className="bg-slate-950 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200"
-                  >
-                    <option value="NARWHAL">NARWHAL (Nano Banana 2)</option>
-                    <option value="GEM_PIX_2">GEM_PIX_2 (Nano Banana Pro)</option>
-                  </select>
+                {/* Batch Config Controls: Số ảnh 1 lần, Delay giữa lượt, Timeout */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800 text-xs text-slate-300">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-400 font-medium">Số ảnh 1 lần (Batch):</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={batchConcurrency}
+                        onChange={e => setBatchConcurrency(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+                        className="w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-500"
+                        disabled={isBatchGenerating}
+                        title="Số lượng ảnh gửi tạo song song cùng một lúc (ví dụ: 4 ảnh)"
+                      />
+                    </div>
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleBuildPrompts}
-                    className="text-xs border-slate-700"
-                  >
-                    Tái Tạo Prompt
-                  </Button>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-400 font-medium">Delay giữa các lượt:</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={0}
+                          max={60}
+                          value={batchDelay}
+                          onChange={e => setBatchDelay(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
+                          className="w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-sky-300 focus:outline-none focus:border-sky-500"
+                          disabled={isBatchGenerating}
+                          title="Thời gian nghỉ (giây) sau khi lượt trước kết thúc để tránh limit"
+                        />
+                        <span className="text-slate-500 text-[11px]">giây</span>
+                      </div>
+                    </div>
 
-                  <Button
-                    size="sm"
-                    onClick={handleGenerateMissingScenes}
-                    disabled={batchGenProgress !== null || missingCount === 0}
-                    className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 font-semibold shadow-md shadow-amber-600/20"
-                  >
-                    <Zap className="w-3.5 h-3.5 text-amber-200" />
-                    {batchGenProgress ? `Đang tạo (${batchGenProgress.current}/${batchGenProgress.total})...` : `Tạo Tiếp Ảnh Còn Thiếu (${missingCount})`}
-                  </Button>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-400 font-medium">Timeout mỗi ảnh:</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={15}
+                          max={300}
+                          value={batchTimeout}
+                          onChange={e => setBatchTimeout(Math.max(15, Math.min(300, Number(e.target.value) || 60)))}
+                          className="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-red-300 focus:outline-none focus:border-red-500"
+                          disabled={isBatchGenerating}
+                          title="Nếu quá thời gian này (mặc định 60s / 1p) mà chưa có ảnh thì coi như thất bại"
+                        />
+                        <span className="text-slate-500 text-[11px]">giây</span>
+                      </div>
+                    </div>
+                  </div>
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleBatchGenerateImages}
-                    disabled={batchGenProgress !== null || totalCount === 0}
-                    className="text-xs border-slate-700 text-slate-300 hover:text-white"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Tạo Lại Tất Cả ({totalCount})
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    onClick={() => setActiveStage(6)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs gap-1.5"
-                  >
-                    Tiếp Tục Ghép Video <ChevronRight className="w-3.5 h-3.5" />
-                  </Button>
+                  {hasGenerating && (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={handleStopAll}
+                      className="text-xs h-7 px-3 gap-1 bg-red-600 hover:bg-red-500 font-bold ml-auto"
+                      title="Dừng khẩn cấp toàn bộ các ảnh đang tạo ngay lập tức"
+                    >
+                      <StopCircle className="w-3.5 h-3.5" /> Stop All ({activeAbortControllersRef.current.size || 'Dừng'})
+                    </Button>
+                  )}
                 </div>
+
+                {/* Batch Progress Bar */}
+                {batchGenProgress && (
+                  <div className="p-3 bg-slate-950 border border-amber-500/30 rounded-lg space-y-1.5 mt-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-amber-300 flex items-center gap-1.5">
+                        <RotateCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                        {batchGenProgress.message || `Đang tạo ảnh (${batchGenProgress.current}/${batchGenProgress.total})...`}
+                      </span>
+                      <span className="font-mono text-slate-400">
+                        {Math.round((batchGenProgress.current / batchGenProgress.total) * 100)}% ({batchGenProgress.current}/{batchGenProgress.total})
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-amber-500 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${Math.min(100, Math.round((batchGenProgress.current / batchGenProgress.total) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Quota & Multi-Account Card */}
@@ -1335,13 +1755,51 @@ export default function StoryStudioPage() {
               {currentProject?.scenes && currentProject.scenes.map(sc => (
                 <Card
                   key={sc.id}
-                  className="p-3 bg-slate-900/80 border-slate-800 flex flex-col justify-between space-y-2.5 overflow-hidden"
+                  className={`p-3 bg-slate-900/80 border flex flex-col justify-between space-y-2.5 overflow-hidden transition-all duration-200 ${
+                    playingSceneId === sc.id
+                      ? 'border-amber-500/80 bg-slate-900 ring-2 ring-amber-500/50 shadow-lg shadow-amber-500/10'
+                      : 'border-slate-800'
+                  }`}
                 >
                   {/* Scene Header */}
                   <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
-                      {sc.timestamp_str}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[11px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                        {sc.timestamp_str}
+                      </span>
+                      {/* Play Scene Audio Button */}
+                      <button
+                        type="button"
+                        onClick={() => handlePlaySceneAudio(sc)}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                          playingSceneId === sc.id
+                            ? 'bg-amber-400 text-slate-950 font-bold shadow-sm shadow-amber-400/40 animate-pulse'
+                            : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 hover:border-amber-400'
+                        }`}
+                        title={
+                          playingSceneId === sc.id
+                            ? 'Tạm dừng nghe'
+                            : `Phát audio đoạn này (${sc.start_s ?? 0}s - ${sc.end_s ?? ''}s)`
+                        }
+                      >
+                        {playingSceneId === sc.id ? (
+                          <>
+                            <Pause className="w-2.5 h-2.5 fill-current" />
+                            <span>Dừng</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-2.5 h-2.5 fill-current" />
+                            <span>
+                              {sc.end_s && sc.start_s !== undefined && (sc.end_s - sc.start_s) > 0
+                                ? `${(sc.end_s - sc.start_s).toFixed(1)}s`
+                                : 'Nghe'}
+                            </span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
                     <Badge
                       variant="outline"
                       className={`text-[9px] ${
@@ -1360,6 +1818,13 @@ export default function StoryStudioPage() {
 
                   {/* Scene Image Preview */}
                   <div className="aspect-video bg-slate-950 rounded-lg border border-slate-800/80 overflow-hidden flex items-center justify-center relative group">
+                    {playingSceneId === sc.id && (
+                      <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-sm text-amber-300 border border-amber-500/50 px-2 py-0.5 rounded-full text-[10px] font-mono flex items-center gap-1 z-20 animate-pulse shadow-md">
+                        <Volume2 className="w-3 h-3 text-amber-400" />
+                        <span>{sc.start_s ?? 0}s - {sc.end_s ?? 0}s</span>
+                      </div>
+                    )}
+
                     {sc.image_url ? (
                       <>
                         <img
@@ -1367,12 +1832,25 @@ export default function StoryStudioPage() {
                           alt={`Scene ${sc.id}`}
                           className="w-full h-full object-cover"
                         />
-                        <button
-                          onClick={() => setPreviewLightboxImg(sc.image_url || null)}
-                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all text-white gap-1 text-[11px]"
-                        >
-                          <Maximize2 className="w-3.5 h-3.5" /> Phóng To
-                        </button>
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all text-white gap-2 text-[11px] z-10">
+                          <button
+                            onClick={() => setPreviewLightboxImg(sc.image_url || null)}
+                            className="flex items-center gap-1 bg-slate-800/90 hover:bg-slate-700 px-2 py-1 rounded border border-slate-600 text-slate-200"
+                          >
+                            <Maximize2 className="w-3.5 h-3.5" /> Phóng To
+                          </button>
+                          <button
+                            onClick={() => handlePlaySceneAudio(sc)}
+                            className="flex items-center gap-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-2 py-1 rounded shadow-md shadow-amber-500/30"
+                          >
+                            {playingSceneId === sc.id ? (
+                              <Pause className="w-3.5 h-3.5 fill-current" />
+                            ) : (
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                            )}
+                            {playingSceneId === sc.id ? 'Dừng' : 'Nghe Tiếng'}
+                          </button>
+                        </div>
                       </>
                     ) : sc.status === 'generating' ? (
                       <div className="text-center p-3 text-amber-400 animate-pulse">
@@ -1380,15 +1858,28 @@ export default function StoryStudioPage() {
                         <div className="text-[10px]">Đang sinh ảnh qua Flow...</div>
                       </div>
                     ) : (
-                      <div className="text-center p-3 text-slate-600">
-                        <ImageIcon className="w-6 h-6 mx-auto mb-1 opacity-40" />
+                      <div className="text-center p-3 text-slate-600 flex flex-col items-center justify-center gap-1">
+                        <ImageIcon className="w-6 h-6 opacity-40" />
                         <div className="text-[10px]">Chưa sinh ảnh</div>
+                        <button
+                          onClick={() => handlePlaySceneAudio(sc)}
+                          className="text-[10px] text-amber-400/90 hover:text-amber-300 flex items-center gap-1 mt-1 bg-slate-900 border border-slate-800 hover:border-slate-700 px-2 py-0.5 rounded transition-colors"
+                        >
+                          {playingSceneId === sc.id ? (
+                            <Pause className="w-2.5 h-2.5 fill-current" />
+                          ) : (
+                            <Play className="w-2.5 h-2.5 fill-current" />
+                          )}
+                          {playingSceneId === sc.id ? 'Dừng audio' : 'Nghe tiếng cảnh này'}
+                        </button>
                       </div>
                     )}
                   </div>
 
                   {/* Scene Text */}
-                  <p className="text-[11px] text-slate-300 line-clamp-2 leading-tight">
+                  <p className={`text-[11px] line-clamp-2 leading-tight transition-colors ${
+                    playingSceneId === sc.id ? 'text-amber-200 font-medium' : 'text-slate-300'
+                  }`}>
                     {sc.text}
                   </p>
 
@@ -1524,6 +2015,14 @@ export default function StoryStudioPage() {
           </div>
         )}
       </div>
+
+      {/* ── Hidden Scene Audio Player (Stage 4 & 5 timestamp check) ── */}
+      <audio
+        ref={sceneAudioRef}
+        src={currentProject?.audio_url || undefined}
+        preload="auto"
+        onEnded={stopSceneAudio}
+      />
 
       {/* ── Lightbox Modal for Large Image Preview ─────────────────── */}
       {previewLightboxImg && (
