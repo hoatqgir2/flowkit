@@ -472,10 +472,25 @@ async function handleSolveCaptcha(msg) {
 const CAPTCHA_SLOT = '__CAPTCHA__';
 const MAX_RPC_TEXT = 32000000; // the project listing alone is past 17 MB
 
+function extractProjectIdFromFreq(freqStr) {
+  if (!freqStr) return null;
+  // 1. Projects envelope context: [null, <SURFACE_ID>, null, null, null, "UUID"
+  // Handles double JSON-escaped quotes \"UUID\" as well as plain quotes
+  const ctxMatch = freqStr.match(/\[null,\s*\d+,\s*null,\s*null,\s*null,\s*\\?"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\?"?/i);
+  if (ctxMatch) return ctxMatch[1].toLowerCase();
+  // 2. projects/UUID
+  const projMatch = freqStr.match(/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  if (projMatch) return projMatch[1].toLowerCase();
+  // 3. /project/UUID
+  const pMatch = freqStr.match(/\/project\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  if (pMatch) return pMatch[1].toLowerCase();
+  return null;
+}
+
 async function runBatchRpc(cmd) {
   const tabs = await chrome.tabs.query({ url: flowUrls });
-  const projectMatch = cmd.freq ? cmd.freq.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) : null;
-  const targetProjectId = projectMatch ? projectMatch[0].toLowerCase() : null;
+  const explicitPid = (cmd.projectId || '').toLowerCase().trim();
+  const targetProjectId = explicitPid || extractProjectIdFromFreq(cmd.freq);
 
   let candidate = null;
   if (targetProjectId) {
@@ -521,8 +536,8 @@ async function runBatchRpc(cmd) {
   const [injected] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: 'MAIN',
-    args: [cmd.rpcid, freq, MAX_RPC_TEXT, cmd.match || null],
-    func: async (rpcid, freqStr, maxText, match) => {
+    args: [cmd.rpcid, freq, MAX_RPC_TEXT, cmd.match || null, targetProjectId],
+    func: async (rpcid, freqStr, maxText, match, targetPid) => {
       const wiz = globalThis.WIZ_global_data || {};
       const at = wiz.SNlM0e;
       const sid = wiz.FdrFJe;
@@ -534,9 +549,14 @@ async function runBatchRpc(cmd) {
       const uMatch = (location.pathname || '').match(/^\/u\/\d+/);
       const uPrefix = uMatch ? uMatch[0] : '';
       let sourcePath = location.pathname || '/';
-      const pMatch = freqStr.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      if (pMatch && (!sourcePath || sourcePath === '/' || !sourcePath.includes(pMatch[0]))) {
-        sourcePath = `${uPrefix}/project/${pMatch[0]}`;
+      const effectivePid = targetPid || (() => {
+        const m = freqStr.match(/\[null,\s*\d+,\s*null,\s*null,\s*null,\s*\\?"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\?"?/i)
+          || freqStr.match(/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i)
+          || freqStr.match(/\/project\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        return m ? m[1].toLowerCase() : null;
+      })();
+      if (effectivePid && (!sourcePath || sourcePath === '/' || !sourcePath.toLowerCase().includes(effectivePid))) {
+        sourcePath = `${uPrefix}/project/${effectivePid}`;
       }
       const hl = (document.documentElement.lang || navigator.language || 'en').split('-')[0];
       const url =
@@ -574,7 +594,7 @@ async function runBatchRpc(cmd) {
 
 async function handleBatchRpc(msg) {
   const { id, params } = msg;
-  const { rpcid, freq, captchaAction, match } = params || {};
+  const { rpcid, freq, captchaAction, match, projectId } = params || {};
   if (!rpcid || !freq) {
     sendToAgent({ id, status: 400, error: 'INVALID_BATCH_RPC' });
     return;
@@ -603,7 +623,7 @@ async function handleBatchRpc(msg) {
   }
 
   try {
-    const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match });
+    const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match, projectId });
     const isHttpError = typeof out.status === 'number' && out.status >= 400;
     if (out.error || isHttpError) {
       const err = out.error || `HTTP_${out.status}`;

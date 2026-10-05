@@ -87,7 +87,7 @@ export default function StoryStudioPage() {
 
   // Stage 1 State
   const [heroLock, setHeroLock] = useState<string>('')
-  const [flowProjectId, setFlowProjectId] = useState<string>('ac385651-cad3-4fae-a2ba-8e37574d5e1b')
+  const [flowProjectId, setFlowProjectId] = useState<string>(() => localStorage.getItem('fk_last_flow_project_id') || '')
 
   // Stage 2 State (Script)
   const [topic, setTopic] = useState<string>('')
@@ -179,7 +179,10 @@ export default function StoryStudioPage() {
       const proj = await fetchAPI<StoryProject>(`/api/story-studio/projects/${id}`)
       setCurrentProject(proj)
       setHeroLock(proj.hero_lock || '')
-      if (proj.flow_project_id) setFlowProjectId(proj.flow_project_id)
+      if (proj.flow_project_id) {
+        setFlowProjectId(proj.flow_project_id)
+        localStorage.setItem('fk_last_flow_project_id', proj.flow_project_id)
+      }
       setTopic(proj.keyword || '')
       setScriptText(proj.script_text || '')
       setActiveStage(proj.current_stage || 1)
@@ -551,7 +554,7 @@ export default function StoryStudioPage() {
           scene_id: sceneId,
           prompt: customPrompt,
           image_model: imageModel,
-          flow_project_id: flowProjectId,
+          flow_project_id: flowProjectId.trim() || currentProject.flow_project_id,
           timeout_seconds: timeoutSec,
         }),
       })
@@ -616,6 +619,9 @@ export default function StoryStudioPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ flow_project_id: flowProjectId.trim() }),
       })
+      if (res.flow_project_id) {
+        localStorage.setItem('fk_last_flow_project_id', res.flow_project_id)
+      }
       setCurrentProject(prev => prev ? {
         ...prev,
         character_media_id: res.character_media_id,

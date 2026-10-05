@@ -345,6 +345,9 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
     if not prompt:
         raise HTTPException(400, "Scene has no prompt")
 
+    if req.flow_project_id and req.flow_project_id != proj.get("flow_project_id"):
+        proj["flow_project_id"] = req.flow_project_id
+
     target["status"] = "generating"
     ss.save_project(proj)
 
@@ -361,6 +364,7 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
         target["image_url"] = res["image_url"]
         target["cdn_url"] = res["cdn_url"]
         target["status"] = "completed"
+        target["error"] = None
         proj["current_stage"] = max(proj.get("current_stage", 1), 5)
         ss.save_project(proj)
         return res

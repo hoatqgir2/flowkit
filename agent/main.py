@@ -200,6 +200,20 @@ async def ext_callback(request: Request):
     return {"ok": False, "reason": "no matching pending request"}
 
 
+@app.post("/api/ext/reload")
+async def ext_reload():
+    """Tell the connected extension to reload its background worker."""
+    client = get_flow_client()
+    if not client.connected:
+        return {"ok": False, "error": "Extension not connected"}
+    for ws in list(client._extensions.keys()):
+        try:
+            await ws.send(json.dumps({"method": "reload_extension"}))
+        except Exception:
+            pass
+    return {"ok": True, "message": "Reload signal sent to extension"}
+
+
 @app.get("/health")
 async def health():
     client = get_flow_client()

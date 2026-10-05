@@ -128,6 +128,25 @@ def get_project(project_id: str) -> Optional[Dict[str, Any]]:
                 proj["character_image_url"] = f"/output/story_studio/{project_id}/character_ref.png?t={int(char_file.stat().st_mtime)}"
                 needs_save = True
 
+            # Auto-reconcile scene images and clear stuck/orphan 'generating' status
+            scenes = proj.get("scenes", [])
+            for sc in scenes:
+                sc_id = sc.get("id")
+                if not sc_id:
+                    continue
+                scene_file = pdir / "scenes" / f"scene_{sc_id:03d}.png"
+                if scene_file.exists() and scene_file.stat().st_size > 1000:
+                    if sc.get("status") != "completed" or not sc.get("image_url"):
+                        sc["status"] = "completed"
+                        sc["image_url"] = f"/output/story_studio/{project_id}/scenes/scene_{sc_id:03d}.png?t={int(scene_file.stat().st_mtime)}"
+                        sc["error"] = None
+                        needs_save = True
+                elif sc.get("status") == "generating":
+                    # File does not exist on disk, reset interrupted 'generating' to 'pending'
+                    sc["status"] = "pending"
+                    sc["error"] = None
+                    needs_save = True
+
             if needs_save:
                 save_project(proj)
 
@@ -300,6 +319,9 @@ async def resync_character_reference(
     if flow_project_id:
         proj["flow_project_id"] = flow_project_id
     save_project(proj)
+
+    # Reset any rate limit / unusual activity cooldown from the previous account
+    client._generation_unusual_until = 0.0
 
     return {
         "ok": True,
