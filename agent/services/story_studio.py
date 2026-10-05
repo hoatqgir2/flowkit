@@ -846,9 +846,10 @@ async def generate_single_scene_image(
         raise RuntimeError(f"Tạo ảnh cảnh {scene_id} quá {int(timeout_seconds)}s (Timeout) - coi như thất bại.")
 
     if res.get("status", 200) >= 400 or res.get("error"):
-        err_msg = str(res.get("error") or "Flow image generation failed")
-        if "quota" in err_msg.lower() or "limit" in err_msg.lower():
-            err_msg += " (Tài khoản Google Flow đã hết lượt quota. Hãy mở tab Google Flow với tài khoản mới và bấm 'Đồng bộ tham chiếu sang Acc mới' để tạo tiếp)"
+        err_msg = str(res.get("error") or res.get("data") or "Flow image generation failed")
+        lower_err = err_msg.lower()
+        if any(k in lower_err for k in ["quota", "limit", "429", "unusual", "exhausted", "paygate", "credit", "cooldown", "too many requests", "hết lượt"]):
+            err_msg = f"[QUOTA_LIMIT] Tài khoản Google Flow đã chạm giới hạn quota hoặc rate limit ({err_msg}). Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ tham chiếu sang Acc mới' để tiếp tục."
         raise RuntimeError(err_msg)
 
     media_list = res.get("data", {}).get("media", [])

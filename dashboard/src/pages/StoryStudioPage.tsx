@@ -654,14 +654,46 @@ export default function StoryStudioPage() {
         await handleGenerateSingleScene(sc.id, sc.prompt, batchTimeout)
       } catch (err: any) {
         const errMsg = String(err?.message || '')
-        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('hết lượt')) {
+        const lowerErr = errMsg.toLowerCase()
+        const isQuota = (
+          lowerErr.includes('quota') ||
+          lowerErr.includes('limit') ||
+          lowerErr.includes('hết lượt') ||
+          lowerErr.includes('429') ||
+          lowerErr.includes('unusual') ||
+          lowerErr.includes('exhausted') ||
+          lowerErr.includes('paygate') ||
+          lowerErr.includes('cooldown') ||
+          lowerErr.includes('too many') ||
+          lowerErr.includes('credit')
+        )
+        const isConnDead = (
+          lowerErr.includes('disconnect') ||
+          lowerErr.includes('no_flow_tab') ||
+          lowerErr.includes('not_connected')
+        )
+
+        if (isQuota || isConnDead) {
+          batchCancelRef.current = true
+          activeAbortControllersRef.current.forEach(controller => {
+            try { controller.abort() } catch {}
+          })
+          activeAbortControllersRef.current.clear()
+
           setBatchGenProgress({ current: i + 1, total })
+          const alertText = isQuota
+            ? `⚠️ ĐÃ DỪNG TOÀN BỘ TIẾN TRÌNH: Tài khoản Google Flow đã chạm giới hạn Quota / Rate Limit ở cảnh #${sc.id}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
+            : `⚠️ ĐÃ DỪNG TOÀN BỘ TIẾN TRÌNH: Mất kết nối tới tab Google Flow ở cảnh #${sc.id}. Vui lòng mở lại tab Flow trên Chrome.`
           setStatusMsg({
             type: 'err',
-            text: `Tài khoản Google Flow hiện tại đã chạm giới hạn quota ở cảnh #${sc.id}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
+            text: alertText,
           })
           break
         }
+      }
+
+      if (batchCancelRef.current) {
+        break
       }
 
       setBatchGenProgress({ current: i + 1, total })
