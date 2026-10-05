@@ -790,6 +790,7 @@ def build_scene_prompts(
     suffix = (
         ", same character design as the reference image, exactly preserving the character's facial features, hair style, hair color, and clothing from the reference image, "
         "do not redesign the character, do not change hair color or clothes, "
+        "no blank background, "
         "no gradients, no drop shadows, no photographic textures, no photorealism, "
         "no 3D render, no realistic faces, no realistic skin, no anime, 16:9 widescreen, "
         "simple educational YouTube explainer doodle style."
