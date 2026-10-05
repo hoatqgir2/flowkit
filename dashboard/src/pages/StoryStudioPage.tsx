@@ -110,8 +110,7 @@ export default function StoryStudioPage() {
 
   // Stage 5 State (Images)
   const [imageModel, setImageModel] = useState<string>('NARWHAL')
-  const [batchConcurrency, setBatchConcurrency] = useState<number>(() => Number(localStorage.getItem('fk_batch_concurrency')) || 4)
-  const [batchDelay, setBatchDelay] = useState<number>(() => Number(localStorage.getItem('fk_batch_delay')) || 5)
+  const [batchDelay, setBatchDelay] = useState<number>(() => Number(localStorage.getItem('fk_batch_delay')) || 3)
   const [batchTimeout, setBatchTimeout] = useState<number>(() => Number(localStorage.getItem('fk_batch_timeout')) || 60)
   const [batchGenProgress, setBatchGenProgress] = useState<{ current: number; total: number; message?: string } | null>(null)
   const [isBatchGenerating, setIsBatchGenerating] = useState<boolean>(false)
@@ -138,9 +137,6 @@ export default function StoryStudioPage() {
   useEffect(() => {
     if (groqKey) localStorage.setItem('fk_groq_key', groqKey)
   }, [groqKey])
-  useEffect(() => {
-    localStorage.setItem('fk_batch_concurrency', String(batchConcurrency))
-  }, [batchConcurrency])
   useEffect(() => {
     localStorage.setItem('fk_batch_delay', String(batchDelay))
   }, [batchDelay])
@@ -630,65 +626,44 @@ export default function StoryStudioPage() {
     setStatusMsg(null)
 
     const total = scenesToProcess.length
-    let processedCount = 0
 
-    // Chunk array into batches of size batchConcurrency
-    const chunks: SceneItem[][] = []
-    const concurrency = Math.max(1, Math.min(10, batchConcurrency || 4))
-    for (let i = 0; i < scenesToProcess.length; i += concurrency) {
-      chunks.push(scenesToProcess.slice(i, i + concurrency))
-    }
-
-    for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+    for (let i = 0; i < scenesToProcess.length; i++) {
       if (batchCancelRef.current) {
-        setStatusMsg({ type: 'ok', text: `Đã dừng tiến trình tạo ảnh (đã xử lý ${processedCount}/${total} cảnh).` })
+        setStatusMsg({ type: 'ok', text: `Đã dừng tiến trình tạo ảnh (đã xử lý ${i}/${total} cảnh).` })
         break
       }
 
-      const currentChunk = chunks[cIdx]
-      const chunkIds = currentChunk.map(c => `#${c.id}`).join(', ')
+      const sc = scenesToProcess[i]
       setBatchGenProgress({
-        current: processedCount,
+        current: i,
         total,
-        message: `Đang tạo lượt ${cIdx + 1}/${chunks.length} (${currentChunk.length} ảnh cùng lúc: ${chunkIds})...`
+        message: `Đang tạo ảnh cảnh #${sc.id} (${i + 1}/${total})...`
       })
 
-      // Run current chunk concurrently
-      const results = await Promise.allSettled(
-        currentChunk.map(sc => handleGenerateSingleScene(sc.id, sc.prompt, batchTimeout))
-      )
-
-      let hitQuota = false
-      let quotaSceneId = 0
-      results.forEach((res, idx) => {
-        if (res.status === 'rejected') {
-          const errMsg = String(res.reason?.message || '')
-          if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('hết lượt')) {
-            hitQuota = true
-            quotaSceneId = currentChunk[idx].id
-          }
+      try {
+        await handleGenerateSingleScene(sc.id, sc.prompt, batchTimeout)
+      } catch (err: any) {
+        const errMsg = String(err?.message || '')
+        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('hết lượt')) {
+          setBatchGenProgress({ current: i + 1, total })
+          setStatusMsg({
+            type: 'err',
+            text: `Tài khoản Google Flow hiện tại đã chạm giới hạn quota ở cảnh #${sc.id}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
+          })
+          break
         }
-      })
-
-      processedCount += currentChunk.length
-      setBatchGenProgress({ current: processedCount, total })
-
-      if (hitQuota) {
-        setStatusMsg({
-          type: 'err',
-          text: `Tài khoản Google Flow hiện tại đã chạm giới hạn quota ở cảnh ${quotaSceneId}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
-        })
-        break
       }
 
-      // Delay between batches
-      if (cIdx < chunks.length - 1 && !batchCancelRef.current && batchDelay > 0) {
+      setBatchGenProgress({ current: i + 1, total })
+
+      // Delay between scenes
+      if (i < scenesToProcess.length - 1 && !batchCancelRef.current && batchDelay > 0) {
         for (let s = batchDelay; s > 0; s--) {
           if (batchCancelRef.current) break
           setBatchGenProgress({
-            current: processedCount,
+            current: i + 1,
             total,
-            message: `Lượt ${cIdx + 1} xong! Chờ ${s}s trước khi chạy lượt ${cIdx + 2}...`
+            message: `Cảnh #${sc.id} xong! Chờ ${s}s trước khi tạo cảnh tiếp theo...`
           })
           await new Promise(r => setTimeout(r, 1000))
         }
@@ -1602,25 +1577,11 @@ export default function StoryStudioPage() {
                   </div>
                 </div>
 
-                {/* Batch Config Controls: Số ảnh 1 lần, Delay giữa lượt, Timeout */}
+                {/* Batch Config Controls: Delay giữa mỗi ảnh, Timeout */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800 text-xs text-slate-300">
                   <div className="flex flex-wrap items-center gap-4">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-slate-400 font-medium">Số ảnh 1 lần (Batch):</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={batchConcurrency}
-                        onChange={e => setBatchConcurrency(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
-                        className="w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-500"
-                        disabled={isBatchGenerating}
-                        title="Số lượng ảnh gửi tạo song song cùng một lúc (ví dụ: 4 ảnh)"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-slate-400 font-medium">Delay giữa các lượt:</span>
+                      <span className="text-slate-400 font-medium">Delay giữa mỗi ảnh:</span>
                       <div className="flex items-center gap-1">
                         <input
                           type="number"
@@ -1630,7 +1591,7 @@ export default function StoryStudioPage() {
                           onChange={e => setBatchDelay(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
                           className="w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-sky-300 focus:outline-none focus:border-sky-500"
                           disabled={isBatchGenerating}
-                          title="Thời gian nghỉ (giây) sau khi lượt trước kết thúc để tránh limit"
+                          title="Thời gian nghỉ (giây) sau khi mỗi ảnh hoàn tất để tránh bị Google giới hạn rate limit"
                         />
                         <span className="text-slate-500 text-[11px]">giây</span>
                       </div>
