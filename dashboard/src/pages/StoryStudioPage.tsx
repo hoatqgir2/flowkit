@@ -110,7 +110,14 @@ export default function StoryStudioPage() {
 
   // Stage 5 State (Images)
   const [imageModel, setImageModel] = useState<string>('NARWHAL')
-  const [batchDelay, setBatchDelay] = useState<number>(() => Number(localStorage.getItem('fk_batch_delay')) || 3)
+  const [delayMin, setDelayMin] = useState<number>(() => {
+    const saved = localStorage.getItem('fk_batch_delay_min')
+    return saved !== null ? Number(saved) : 5
+  })
+  const [delayMax, setDelayMax] = useState<number>(() => {
+    const saved = localStorage.getItem('fk_batch_delay_max')
+    return saved !== null ? Number(saved) : 10
+  })
   const [batchTimeout, setBatchTimeout] = useState<number>(() => Number(localStorage.getItem('fk_batch_timeout')) || 60)
   const [batchGenProgress, setBatchGenProgress] = useState<{ current: number; total: number; message?: string } | null>(null)
   const [isBatchGenerating, setIsBatchGenerating] = useState<boolean>(false)
@@ -138,8 +145,11 @@ export default function StoryStudioPage() {
     if (groqKey) localStorage.setItem('fk_groq_key', groqKey)
   }, [groqKey])
   useEffect(() => {
-    localStorage.setItem('fk_batch_delay', String(batchDelay))
-  }, [batchDelay])
+    localStorage.setItem('fk_batch_delay_min', String(delayMin))
+  }, [delayMin])
+  useEffect(() => {
+    localStorage.setItem('fk_batch_delay_max', String(delayMax))
+  }, [delayMax])
   useEffect(() => {
     localStorage.setItem('fk_batch_timeout', String(batchTimeout))
   }, [batchTimeout])
@@ -656,14 +666,18 @@ export default function StoryStudioPage() {
 
       setBatchGenProgress({ current: i + 1, total })
 
-      // Delay between scenes
-      if (i < scenesToProcess.length - 1 && !batchCancelRef.current && batchDelay > 0) {
-        for (let s = batchDelay; s > 0; s--) {
+      // Random delay between min and max seconds before next scene
+      const minD = Math.max(0, Math.min(delayMin, delayMax))
+      const maxD = Math.max(minD, Math.max(delayMin, delayMax))
+      const actualDelay = maxD > 0 ? Math.floor(Math.random() * (maxD - minD + 1)) + minD : 0
+
+      if (i < scenesToProcess.length - 1 && !batchCancelRef.current && actualDelay > 0) {
+        for (let s = actualDelay; s > 0; s--) {
           if (batchCancelRef.current) break
           setBatchGenProgress({
             current: i + 1,
             total,
-            message: `Cảnh #${sc.id} xong! Chờ ${s}s trước khi tạo cảnh tiếp theo...`
+            message: `Cảnh #${sc.id} xong! Chờ ${s}s (ngẫu nhiên ${minD}s ➔ ${maxD}s) trước khi tạo cảnh tiếp theo...`
           })
           await new Promise(r => setTimeout(r, 1000))
         }
@@ -1587,13 +1601,24 @@ export default function StoryStudioPage() {
                           type="number"
                           min={0}
                           max={60}
-                          value={batchDelay}
-                          onChange={e => setBatchDelay(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
-                          className="w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-sky-300 focus:outline-none focus:border-sky-500"
+                          value={delayMin}
+                          onChange={e => setDelayMin(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
+                          className="w-12 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-sky-300 focus:outline-none focus:border-sky-500"
                           disabled={isBatchGenerating}
-                          title="Thời gian nghỉ (giây) sau khi mỗi ảnh hoàn tất để tránh bị Google giới hạn rate limit"
+                          title="Thời gian delay tối thiểu (giây)"
                         />
-                        <span className="text-slate-500 text-[11px]">giây</span>
+                        <span className="text-slate-400 text-xs font-bold">➔</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={60}
+                          value={delayMax}
+                          onChange={e => setDelayMax(Math.max(0, Math.min(60, Number(e.target.value) || 0)))}
+                          className="w-12 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono font-bold text-sky-300 focus:outline-none focus:border-sky-500"
+                          disabled={isBatchGenerating}
+                          title="Thời gian delay tối đa (giây)"
+                        />
+                        <span className="text-slate-500 text-[11px]">giây (ngẫu nhiên)</span>
                       </div>
                     </div>
 
