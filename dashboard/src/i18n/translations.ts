@@ -49,6 +49,7 @@ const en = {
   // ---- nav / app shell ----
   'nav.dashboard': 'Dashboard',
   'nav.projects': 'Projects',
+  'nav.storyStudio': 'Story Studio',
   'nav.gallery': 'Gallery',
   'nav.logs': 'Logs',
   'nav.guide': 'Guide',
@@ -58,6 +59,7 @@ const en = {
   'app.breadcrumbRoot': 'flow kit',
   'app.breadcrumb.dashboard': 'dashboard',
   'app.breadcrumb.projects': 'projects',
+  'app.breadcrumb.storyStudio': 'story studio',
   'app.breadcrumb.gallery': 'gallery',
   'app.breadcrumb.logs': 'logs',
   'app.breadcrumb.guide': 'guide',
@@ -377,6 +379,7 @@ const vi: Partial<Record<TranslationKey, string>> = {
 
   'nav.dashboard': 'Tổng quan',
   'nav.projects': 'Dự án',
+  'nav.storyStudio': 'Văn Minh Bị Bỏ Quên',
   'nav.gallery': 'Thư viện',
   'nav.logs': 'Nhật ký',
   'nav.guide': 'Hướng dẫn',
@@ -386,6 +389,7 @@ const vi: Partial<Record<TranslationKey, string>> = {
   'app.breadcrumbRoot': 'flow kit',
   'app.breadcrumb.dashboard': 'tổng quan',
   'app.breadcrumb.projects': 'dự án',
+  'app.breadcrumb.storyStudio': 'văn minh bị bỏ quên',
   'app.breadcrumb.gallery': 'thư viện',
   'app.breadcrumb.logs': 'nhật ký',
   'app.breadcrumb.guide': 'hướng dẫn',

@@ -8,8 +8,9 @@ from contextlib import asynccontextmanager
 import websockets
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from agent.config import API_HOST, API_PORT, WS_HOST, WS_PORT
+from agent.config import API_HOST, API_PORT, WS_HOST, WS_PORT, OUTPUT_DIR
 from agent.db.schema import init_db, close_db
 from agent.api.characters import router as characters_router
 from agent.api.projects import router as projects_router
@@ -25,6 +26,7 @@ from agent.api.models import router as models_router
 from agent.api.providers import router as providers_router
 from agent.api.provider_jobs import router as provider_jobs_router
 from agent.api.active_project import router as active_project_router
+from agent.api.story_studio import router as story_studio_router
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
@@ -162,6 +164,11 @@ app.include_router(provider_jobs_router, prefix="/api")
 app.include_router(models_router)
 app.include_router(providers_router)
 app.include_router(active_project_router)
+app.include_router(story_studio_router, prefix="/api")
+
+# Static files for rendered audio, images, and videos
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 
 import secrets as _secrets

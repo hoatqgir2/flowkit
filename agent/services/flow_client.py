@@ -1116,6 +1116,8 @@ def _as_media_record(image: "fb.GeneratedImage") -> dict:
     """One generated image, in the REST response's `media[]` shape."""
     return {
         "name": image.media_id,
+        "mediaId": image.media_id,
+        "url": image.url,
         "image": {"generatedImage": {"mediaId": image.media_id, "fifeUrl": image.url}},
     }
 
