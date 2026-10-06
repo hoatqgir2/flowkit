@@ -22,7 +22,9 @@ import {
   Maximize2,
   Zap,
   X,
-  StopCircle
+  StopCircle,
+  Eraser,
+  Check
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -41,6 +43,7 @@ interface SceneItem {
   cdn_url?: string
   status?: 'pending' | 'generating' | 'completed' | 'failed'
   error?: string
+  watermark_removed?: boolean
 }
 
 interface StoryProject {
@@ -776,6 +779,70 @@ export default function StoryStudioPage() {
         ? `Đã dừng khẩn cấp tất cả (${abortCount} ảnh) đang tạo ngay lập tức!`
         : 'Đã dừng tất cả các tiến trình tạo ảnh!'
     })
+  }
+
+  // ── Watermark Removal Handlers ─────────────────────────────────────
+  const [isBatchWatermarking, setIsBatchWatermarking] = useState<boolean>(false)
+  const [watermarkingSceneId, setWatermarkingSceneId] = useState<number | null>(null)
+
+  const handleRemoveWatermarkSingle = async (sceneId: number) => {
+    if (!currentProject) return
+    setWatermarkingSceneId(sceneId)
+    try {
+      const res = await fetchAPI<{ scene_id: number; watermark_removed: boolean; image_url: string }>(
+        `/api/story-studio/projects/${currentProject.id}/scenes/${sceneId}/remove-watermark`,
+        { method: 'POST' }
+      )
+      setCurrentProject(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          scenes: (prev.scenes || []).map(s =>
+            s.id === sceneId
+              ? { ...s, watermark_removed: true, image_url: res.image_url }
+              : s
+          ),
+        }
+      })
+      setStatusMsg({ type: 'ok', text: `Đã xóa watermark cảnh #${sceneId} thành công!` })
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi xóa watermark cảnh #${sceneId}: ${err.message}` })
+    } finally {
+      setWatermarkingSceneId(null)
+    }
+  }
+
+  const handleRemoveWatermarkAll = async () => {
+    if (!currentProject) return
+    const completedScenes = (currentProject.scenes || []).filter(s => s.status === 'completed' && s.image_url)
+    if (completedScenes.length === 0) {
+      setStatusMsg({ type: 'err', text: 'Chưa có ảnh nào hoàn tất để xóa watermark.' })
+      return
+    }
+
+    if (!confirm(`Xóa watermark cho toàn bộ ${completedScenes.length} ảnh đã tạo?`)) {
+      return
+    }
+
+    setIsBatchWatermarking(true)
+    try {
+      const res = await fetchAPI<{ project_id: string; total_cleaned: number; scenes: SceneItem[] }>(
+        `/api/story-studio/projects/${currentProject.id}/remove-watermark-all`,
+        { method: 'POST' }
+      )
+      setCurrentProject(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          scenes: res.scenes,
+        }
+      })
+      setStatusMsg({ type: 'ok', text: `Đã xóa sạch watermark cho toàn bộ ${res.total_cleaned} ảnh!` })
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi xóa watermark hàng loạt: ${err.message}` })
+    } finally {
+      setIsBatchWatermarking(false)
+    }
   }
 
   // ── Stage 6: Render Final Video ─────────────────────────────────────
@@ -1552,6 +1619,7 @@ export default function StoryStudioPage() {
           const completedCount = currentProject?.scenes?.filter(s => s.status === 'completed' && s.image_url).length || 0
           const totalCount = currentProject?.scenes?.length || 0
           const missingCount = totalCount - completedCount
+          const unwatermarkedCount = currentProject?.scenes?.filter(s => s.status === 'completed' && s.watermark_removed).length || 0
           const hasGenerating = isBatchGenerating || Boolean(currentProject?.scenes?.some(s => s.status === 'generating'))
 
           return (
@@ -1606,6 +1674,18 @@ export default function StoryStudioPage() {
                     >
                       <Sparkles className="w-3.5 h-3.5" />
                       Tạo Lại Tất Cả ({totalCount})
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleRemoveWatermarkAll}
+                      disabled={isBatchGenerating || isBatchWatermarking || completedCount === 0}
+                      className="text-xs border-cyan-700/80 text-cyan-300 hover:bg-cyan-950/60 hover:text-cyan-200 gap-1.5 font-medium shadow-sm"
+                      title="Xóa watermark Gemini ở góc dưới bên phải cho tất cả ảnh đã tạo"
+                    >
+                      <Eraser className={`w-3.5 h-3.5 ${isBatchWatermarking ? 'animate-spin' : ''}`} />
+                      {isBatchWatermarking ? `Đang xóa watermark...` : `Xóa Watermark Tất Cả (${completedCount})`}
                     </Button>
 
                     {hasGenerating && (
@@ -1735,6 +1815,11 @@ export default function StoryStudioPage() {
                     <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-xs px-2.5 py-1">
                       ✓ Đã xong: {completedCount} / {totalCount} ảnh
                     </Badge>
+                    {unwatermarkedCount > 0 && (
+                      <Badge variant="outline" className="border-cyan-500/40 text-cyan-300 bg-cyan-500/10 text-xs px-2.5 py-1 font-semibold gap-1">
+                        <Check className="w-3 h-3" /> Đã xóa WM: {unwatermarkedCount} / {completedCount}
+                      </Badge>
+                    )}
                     {missingCount > 0 ? (
                       <Badge variant="outline" className="border-amber-500/40 text-amber-300 bg-amber-500/10 text-xs px-2.5 py-1 font-semibold">
                         ⏳ Còn thiếu: {missingCount} ảnh
@@ -1843,6 +1928,12 @@ export default function StoryStudioPage() {
 
                   {/* Scene Image Preview */}
                   <div className="aspect-video bg-slate-950 rounded-lg border border-slate-800/80 overflow-hidden flex items-center justify-center relative group">
+                    {sc.watermark_removed && (
+                      <div className="absolute top-2 left-2 bg-emerald-950/90 text-emerald-300 border border-emerald-500/60 px-1.5 py-0.5 rounded text-[9px] font-semibold flex items-center gap-1 z-20 shadow-md">
+                        <Check className="w-2.5 h-2.5 text-emerald-400" /> Đã xóa WM
+                      </div>
+                    )}
+
                     {playingSceneId === sc.id && (
                       <div className="absolute top-2 right-2 bg-black/85 backdrop-blur-sm text-amber-300 border border-amber-500/50 px-2 py-0.5 rounded-full text-[10px] font-mono flex items-center gap-1 z-20 animate-pulse shadow-md">
                         <Volume2 className="w-3 h-3 text-amber-400" />
@@ -1919,17 +2010,37 @@ export default function StoryStudioPage() {
                     </div>
                   </details>
 
-                  {/* Regenerate Button */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleGenerateSingleScene(sc.id, sc.prompt)}
-                    disabled={sc.status === 'generating'}
-                    className="w-full text-[10px] h-7 border-slate-700 hover:bg-slate-800 gap-1"
-                  >
-                    <RotateCw className="w-3 h-3" />
-                    {sc.image_url ? 'Tạo Lại Ảnh Này' : 'Sinh Ảnh Cảnh Này'}
-                  </Button>
+                  {/* Action Buttons: Regenerate & Remove Watermark */}
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleGenerateSingleScene(sc.id, sc.prompt)}
+                      disabled={sc.status === 'generating' || isBatchGenerating}
+                      className="flex-1 text-[10px] h-7 border-slate-700 hover:bg-slate-800 gap-1"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      {sc.image_url ? 'Tạo Lại' : 'Sinh Ảnh'}
+                    </Button>
+
+                    {sc.image_url && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleRemoveWatermarkSingle(sc.id)}
+                        disabled={watermarkingSceneId === sc.id || isBatchWatermarking}
+                        className={`text-[10px] h-7 px-2.5 gap-1 font-medium transition-colors ${
+                          sc.watermark_removed
+                            ? 'border-emerald-600/50 text-emerald-400 hover:bg-emerald-950/40'
+                            : 'border-cyan-700/60 text-cyan-300 hover:bg-cyan-950/40 hover:text-cyan-200'
+                        }`}
+                        title={sc.watermark_removed ? 'Watermark đã được xóa (bấm để xóa lại)' : 'Xóa watermark Gemini ở góc dưới bên phải'}
+                      >
+                        <Eraser className={`w-3 h-3 ${watermarkingSceneId === sc.id ? 'animate-spin' : ''}`} />
+                        {watermarkingSceneId === sc.id ? 'Đang xóa...' : sc.watermark_removed ? 'Đã Xóa WM' : 'Xóa WM'}
+                      </Button>
+                    )}
+                  </div>
                 </Card>
               ))}
             </div>

@@ -915,6 +915,167 @@ async def generate_single_scene_image(
     }
 
 
+_FLOW_GEMINI_ALPHA_B64 = (
+    "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"
+    "fdtDLff/MvwHqY6hIw=="
+)
+_FLOW_GEMINI_ALPHA_MAP = None
+
+
+def _get_flow_gemini_alpha_map():
+    global _FLOW_GEMINI_ALPHA_MAP
+    if _FLOW_GEMINI_ALPHA_MAP is None:
+        import base64
+        import zlib
+        import numpy as np
+        raw = zlib.decompress(base64.b64decode(_FLOW_GEMINI_ALPHA_B64))
+        _FLOW_GEMINI_ALPHA_MAP = np.frombuffer(raw, dtype=np.float32).reshape((48, 48))
+    return _FLOW_GEMINI_ALPHA_MAP
+
+
+def remove_gemini_watermark_from_file(image_path: Path | str, output_path: Path | str = None) -> bool:
+    """Remove Gemini/Google Flow bottom-right star watermark using reverse alpha blending without blurring."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        logger.error("opencv-python is required for watermark removal")
+        return False
+
+    image_path = Path(image_path)
+    output_path = Path(output_path or image_path)
+    if not image_path.exists():
+        return False
+
+    img = cv2.imread(str(image_path))
+    if img is None:
+        return False
+
+    h, w = img.shape[:2]
+    alpha_map = _get_flow_gemini_alpha_map()
+
+    # Google Flow standard positioning: 48x48 star logo at 73px margins from bottom-right
+    if w == 1376 and h == 768:
+        x, y = w - 73 - 48, h - 73 - 48
+    elif w == 768 and h == 1376:  # 9:16 vertical
+        x, y = w - 73 - 48, h - 73 - 48
+    else:
+        scale = min(w / 1376.0, h / 768.0)
+        target_size = int(max(32, round(48 * scale)))
+        x = int(w - 73 * scale - target_size)
+        y = int(h - 73 * scale - target_size)
+        alpha_map = cv2.resize(alpha_map, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
+
+    kw, kh = alpha_map.shape[1], alpha_map.shape[0]
+    if x < 0 or y < 0 or x + kw > w or y + kh > h:
+        return False
+
+    patch = img[y:y+kh, x:x+kw].astype(np.float32)
+    cleaned = patch.copy()
+
+    # Pure mathematical reverse alpha blend:
+    # W = (1 - a) * Orig + a * Logo => Orig = (W - a * Logo) / (1 - a)
+    # For positive alpha (white star logo = 255): Orig = (W - a * 255) / (1 - a)
+    # For negative alpha (dark shadow logo = 0): Orig = W / (1 - |a|)
+    pos_mask = alpha_map > 0.005
+    neg_mask = alpha_map < -0.005
+
+    pos_a = np.minimum(alpha_map[pos_mask], 0.95)[:, None]
+    cleaned[pos_mask] = (patch[pos_mask] - pos_a * 255.0) / (1.0 - pos_a)
+
+    neg_mag = np.minimum(np.abs(alpha_map[neg_mask]), 0.95)[:, None]
+    cleaned[neg_mask] = patch[neg_mask] / (1.0 - neg_mag)
+
+    cleaned = np.clip(np.round(cleaned), 0, 255).astype(np.uint8)
+    img[y:y+kh, x:x+kw] = cleaned
+    cv2.imwrite(str(output_path), img)
+    return True
+
+
+def remove_scene_watermark(project_id: str, scene_id: int) -> Dict[str, Any]:
+    """Remove watermark for a single scene image in the project."""
+    proj = get_project(project_id)
+    if not proj:
+        raise ValueError(f"Project {project_id} not found")
+
+    scenes = proj.get("scenes", [])
+    target = next((s for s in scenes if s["id"] == scene_id), None)
+    if not target:
+        raise ValueError(f"Scene {scene_id} not found")
+
+    pdir = get_project_dir(project_id)
+    local_path = pdir / "scenes" / f"scene_{scene_id:03d}.png"
+    if not local_path.exists():
+        raise FileNotFoundError(f"Local image file not found for scene {scene_id}")
+
+    ok = remove_gemini_watermark_from_file(local_path)
+    if not ok:
+        raise RuntimeError(f"Failed to remove watermark from scene {scene_id}")
+
+    now_ts = int(time.time())
+    target["watermark_removed"] = True
+    target["image_url"] = f"/output/story_studio/{project_id}/scenes/scene_{scene_id:03d}.png?t={now_ts}"
+    save_project(proj)
+
+    return {
+        "scene_id": scene_id,
+        "watermark_removed": True,
+        "image_url": target["image_url"],
+    }
+
+
+def remove_all_scene_watermarks(project_id: str) -> Dict[str, Any]:
+    """Remove watermark for all completed scenes with local images in the project."""
+    proj = get_project(project_id)
+    if not proj:
+        raise ValueError(f"Project {project_id} not found")
+
+    scenes = proj.get("scenes", [])
+    pdir = get_project_dir(project_id)
+    scene_dir = pdir / "scenes"
+
+    cleaned_count = 0
+    now_ts = int(time.time())
+
+    for sc in scenes:
+        sid = sc.get("id")
+        img_file = scene_dir / f"scene_{sid:03d}.png"
+        if img_file.exists():
+            if remove_gemini_watermark_from_file(img_file):
+                sc["watermark_removed"] = True
+                sc["image_url"] = f"/output/story_studio/{project_id}/scenes/scene_{sid:03d}.png?t={now_ts}"
+                cleaned_count += 1
+
+    save_project(proj)
+    return {
+        "project_id": project_id,
+        "total_cleaned": cleaned_count,
+        "scenes": scenes,
+    }
+
+
 # ── Stage 6: Video Assembly (FFmpeg) ──────────────────────────────────
 
 

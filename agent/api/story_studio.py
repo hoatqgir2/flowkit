@@ -364,6 +364,7 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
         target["image_url"] = res["image_url"]
         target["cdn_url"] = res["cdn_url"]
         target["status"] = "completed"
+        target["watermark_removed"] = False
         target["error"] = None
         proj["current_stage"] = max(proj.get("current_stage", 1), 5)
         ss.save_project(proj)
@@ -373,6 +374,30 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
         target["error"] = str(e)
         ss.save_project(proj)
         raise HTTPException(502, f"Image generation failed: {e}")
+
+
+@router.post("/projects/{project_id}/scenes/{scene_id}/remove-watermark")
+async def remove_scene_watermark_endpoint(project_id: str, scene_id: int):
+    """Remove Gemini watermark from a single scene image."""
+    try:
+        return ss.remove_scene_watermark(project_id, scene_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Watermark removal failed: {e}")
+
+
+@router.post("/projects/{project_id}/remove-watermark-all")
+async def remove_all_watermarks_endpoint(project_id: str):
+    """Remove Gemini watermark from all completed scene images in the project."""
+    try:
+        return ss.remove_all_scene_watermarks(project_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Batch watermark removal failed: {e}")
 
 
 # ── Stage 6: Video Assembly ───────────────────────────────────────────
