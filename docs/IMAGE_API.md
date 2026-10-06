@@ -22,9 +22,10 @@ capabilities currently wired by Flow Kit.
 
 Current Flow UI model ids observed on the migrated frontend:
 
+- `BELUGA` — Nano Banana 2
 - `GEM_PIX_2` — Nano Banana Pro
-- `NARWHAL` — Nano Banana 2
 - `HARBOR_SEAL` — Nano Banana 2 Lite
+- `NARWHAL` — Nano Banana 2 (Legacy ID)
 
 Friendly aliases from `models.json` continue to work. Flow Kit also passes a
 syntactically valid future wire model id through unchanged instead of silently

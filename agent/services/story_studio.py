@@ -840,7 +840,7 @@ async def generate_single_scene_image(
     prompt: str,
     character_media_id: str = "",
     flow_project_id: str = "",
-    image_model: str = "NARWHAL",
+    image_model: str = "BELUGA",
     timeout_seconds: float = 60.0,
 ) -> Dict[str, Any]:
     """Generate image for a scene and save locally."""

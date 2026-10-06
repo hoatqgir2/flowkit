@@ -109,7 +109,7 @@ export default function StoryStudioPage() {
   const [showRawTranscriptInput, setShowRawTranscriptInput] = useState<boolean>(false)
 
   // Stage 5 State (Images)
-  const [imageModel, setImageModel] = useState<string>('NARWHAL')
+  const [imageModel, setImageModel] = useState<string>('BELUGA')
   const [delayMin, setDelayMin] = useState<number>(() => {
     const saved = localStorage.getItem('fk_batch_delay_min')
     return saved !== null ? Number(saved) : 5
@@ -1573,8 +1573,9 @@ export default function StoryStudioPage() {
                       onChange={e => setImageModel(e.target.value)}
                       className="bg-slate-950 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200"
                     >
-                      <option value="NARWHAL">NARWHAL (Nano Banana 2)</option>
+                      <option value="BELUGA">BELUGA (Nano Banana 2 - Khuyên dùng)</option>
                       <option value="GEM_PIX_2">GEM_PIX_2 (Nano Banana Pro)</option>
+                      <option value="NARWHAL">NARWHAL (Nano Banana 2 - Mã cũ)</option>
                     </select>
 
                     <Button

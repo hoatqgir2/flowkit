@@ -58,7 +58,7 @@ class BuildPromptsRequest(BaseModel):
 class GenerateSceneImageRequest(BaseModel):
     scene_id: int
     prompt: Optional[str] = None
-    image_model: Optional[str] = "NARWHAL"
+    image_model: Optional[str] = "BELUGA"
     flow_project_id: Optional[str] = ""
     timeout_seconds: Optional[float] = 60.0
 
@@ -358,7 +358,7 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
             prompt=prompt,
             character_media_id=proj.get("character_media_id", ""),
             flow_project_id=req.flow_project_id or proj.get("flow_project_id", ""),
-            image_model=req.image_model or "NARWHAL",
+            image_model=req.image_model or "BELUGA",
             timeout_seconds=float(req.timeout_seconds or 60.0),
         )
         target["image_url"] = res["image_url"]

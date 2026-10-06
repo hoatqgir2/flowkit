@@ -330,10 +330,11 @@ class TestResolvers:
 
     def test_nicknames_resolve_to_wire_names(self):
         assert fb.resolve_image_model("NANO_BANANA_PRO") == "GEM_PIX_2"
-        assert fb.resolve_image_model("NANO_BANANA_2") == "NARWHAL"
+        assert fb.resolve_image_model("NANO_BANANA_2") == "BELUGA"
         assert fb.resolve_image_model("NANO_BANANA_2_LITE") == "HARBOR_SEAL"
 
     def test_wire_names_and_future_model_ids_pass_through(self):
+        assert fb.resolve_image_model("BELUGA") == "BELUGA"
         assert fb.resolve_image_model("NARWHAL") == "NARWHAL"
         assert fb.resolve_image_model("harbor_seal") == "HARBOR_SEAL"
         assert fb.resolve_image_model("FUTURE_BANANA_3") == "FUTURE_BANANA_3"
