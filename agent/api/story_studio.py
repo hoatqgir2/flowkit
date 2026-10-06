@@ -62,6 +62,20 @@ class UpdateTranscriptRequest(BaseModel):
 class BuildPromptsRequest(BaseModel):
     hero_lock: Optional[str] = None
     style: Optional[str] = "forgotten_civilizations"
+    use_ai: Optional[bool] = False
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
+class GeneratePromptsAIRequest(BaseModel):
+    style: Optional[str] = None
+    hero_lock: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    batch_size: Optional[int] = 25
+    scene_id: Optional[int] = None
 
 
 class GenerateSceneImageRequest(BaseModel):
@@ -354,20 +368,87 @@ async def update_transcript_endpoint(project_id: str, req: UpdateTranscriptReque
 
 @router.post("/projects/{project_id}/build-prompts")
 async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
-    """Rebuild doodle prompts for all scenes with selected style."""
+    """Rebuild doodle prompts for all scenes with selected style (rule-based or AI)."""
     proj = ss.get_project(project_id)
     if not proj:
         raise HTTPException(404, "Project not found")
 
     prompt_style = req.style or proj.get("prompt_style") or "forgotten_civilizations"
     hero_lock = req.hero_lock or proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
-    scenes = ss.build_scene_prompts(proj.get("scenes", []), hero_lock, proj.get("keyword", ""), style=prompt_style)
+    topic = proj.get("title") or proj.get("keyword") or ""
+
+    if req.use_ai:
+        scenes = await ss.generate_scene_prompts_ai(
+            proj.get("scenes", []),
+            hero_lock=hero_lock,
+            topic=topic,
+            style=prompt_style,
+            base_url=req.base_url or "",
+            api_key=req.api_key or "",
+            model=req.model or "",
+        )
+    else:
+        scenes = ss.build_scene_prompts(proj.get("scenes", []), hero_lock, proj.get("keyword", ""), style=prompt_style)
+
     proj["scenes"] = scenes
     proj["hero_lock"] = hero_lock
     proj["prompt_style"] = prompt_style
     proj["current_stage"] = max(proj.get("current_stage", 1), 5)
     ss.save_project(proj)
     return {"scenes": scenes, "prompt_style": prompt_style}
+
+
+@router.post("/projects/{project_id}/generate-prompts-ai")
+async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRequest):
+    """Generate intelligent 2D doodle prompts using OpenAI-compatible LLM."""
+    proj = ss.get_project(project_id)
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    prompt_style = req.style or proj.get("prompt_style") or "brain_psychology"
+    hero_lock = req.hero_lock or proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
+    topic = proj.get("title") or proj.get("keyword") or ""
+
+    all_scenes = proj.get("scenes", [])
+    if req.scene_id is not None:
+        target_scenes = [s for s in all_scenes if s.get("id") == req.scene_id]
+        if not target_scenes:
+            raise HTTPException(404, f"Scene #{req.scene_id} not found")
+        updated = await ss.generate_scene_prompts_ai(
+            target_scenes,
+            hero_lock=hero_lock,
+            topic=topic,
+            style=prompt_style,
+            base_url=req.base_url or "",
+            api_key=req.api_key or "",
+            model=req.model or "",
+            batch_size=1,
+        )
+        if updated:
+            new_prompt = updated[0]["prompt"]
+            for s in all_scenes:
+                if s.get("id") == req.scene_id:
+                    s["prompt"] = new_prompt
+                    break
+        scenes = all_scenes
+    else:
+        scenes = await ss.generate_scene_prompts_ai(
+            all_scenes,
+            hero_lock=hero_lock,
+            topic=topic,
+            style=prompt_style,
+            base_url=req.base_url or "",
+            api_key=req.api_key or "",
+            model=req.model or "",
+            batch_size=req.batch_size or 25,
+        )
+
+    proj["scenes"] = scenes
+    proj["hero_lock"] = hero_lock
+    proj["prompt_style"] = prompt_style
+    proj["current_stage"] = max(proj.get("current_stage", 1), 5)
+    ss.save_project(proj)
+    return {"scenes": scenes, "prompt_style": prompt_style, "count": len(scenes)}
 
 
 @router.post("/projects/{project_id}/generate-scene-image")

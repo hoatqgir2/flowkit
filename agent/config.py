@@ -192,3 +192,8 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 GROQ_WHISPER_MODEL = os.environ.get("GROQ_WHISPER_MODEL", "whisper-large-v3")
 
+# ─── Story Studio AI Prompts (OpenAI-compatible) ─────────────
+STORY_AI_BASE_URL = os.environ.get("STORY_AI_BASE_URL", "https://ai.tuvimoi.com/v1")
+STORY_AI_API_KEY = os.environ.get("STORY_AI_API_KEY", "sk-dfc0e3c70d85fe58-t4zf4c-444c53ec")
+STORY_AI_MODEL = os.environ.get("STORY_AI_MODEL", "ag/gemini-3.8-flash-high")
+

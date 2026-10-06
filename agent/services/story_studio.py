@@ -24,7 +24,16 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from agent.config import BASE_DIR, OUTPUT_DIR, GROQ_API_KEY, GROQ_BASE_URL, GROQ_WHISPER_MODEL
+from agent.config import (
+    BASE_DIR,
+    OUTPUT_DIR,
+    GROQ_API_KEY,
+    GROQ_BASE_URL,
+    GROQ_WHISPER_MODEL,
+    STORY_AI_BASE_URL,
+    STORY_AI_API_KEY,
+    STORY_AI_MODEL,
+)
 from agent.services.flow_client import get_flow_client
 
 logger = logging.getLogger(__name__)
@@ -50,6 +59,13 @@ STYLES_REGISTRY: Dict[str, Dict[str, Any]] = {
         "description_vi": "Phong cách doodle 2D chuẩn Ancient Humans về con người tiền sử, tiến hóa và sinh tồn. Nhân vật que đầu tròn tóc cam nhọn đặc trưng (#F58220) hoặc người tiền sử tóc nâu xù. Đặc trưng: tảng đá dán nhãn chữ trắng ALL-CAPS (SURVIVAL), thảo nguyên savanna cây keo lẻ loi, mây mưa khó khăn, lửa trại bộ lạc, nhà khảo cổ nón cối, dấu X đỏ phủ định quan niệm sai.",
         "default_hero_lock": "The main stick figure character from the reference image with spiky bright orange hair",
     },
+    "brain_psychology": {
+        "id": "brain_psychology",
+        "name": "Tâm Lý Học Não Bộ (Why Your Brain Ignores Advice)",
+        "short_desc": "Doodle tâm lý học, não bộ hồng 2D ngộ nghĩnh, lời khuyên bị phớt lờ, thiên kiến nhận thức",
+        "description_vi": "Phong cách hoạt hình doodle 2D chuyên đề Tâm lý học & Khoa học Hành vi (Psychology & Behavioral Neuroscience). Nhân vật que tối giản tương tác cùng bộ não hoạt hình 2D màu hồng pastel/san hô với biểu cảm ngộ nghĩnh (bối rối, lười biếng, hoảng sợ), người que bịt tai phớt lờ loa phóng thanh lời khuyên, đám mây suy nghĩ rối như tơ vò, bẫy dopamine lướt điện thoại, ngã rẽ thói quen và các thí nghiệm tâm lý với dấu X đỏ phủ định.",
+        "default_hero_lock": "The main minimalist stick figure character from the reference image with a round white head",
+    },
 }
 
 
@@ -70,6 +86,23 @@ Structure:
 5. Reconstruct one concrete workday: Morning to evening of a real role (salt trader, river pilot, potter, farmer, monsoon sailor).
 6. Modern Mirror: Reflect the ancient workday back onto something the viewer does today (a commute, a meal, an alarm, a job you keep delaying leaving).
 7. Conclusion: Close with a line that directly echoes the opening line, completely reframed.
+
+Write PURE narration text only — NO stage directions, NO bracketed notes, NO headings, NO asterisks. Just pure voiceover narration text.
+"""
+
+SYSTEM_PROMPT_PSYCHOLOGY = """
+You are a viral educational documentary scriptwriter specializing in psychology, cognitive biases, neuroscience, and human behavioral science (in the style of "Why your brain ignores good advice").
+Format: Educational explainer narrated in calm, intelligent 2nd-person ("you", "your brain", "your ego", "your limbic system") — never "we" or "I".
+Length: 600–1200 words.
+
+Structure:
+1. Hook: Drop viewer immediately into a relatable behavioral contradiction ("Someone gives you genuinely great advice. You nod. You agree completely. And then you do the exact opposite.").
+2. The Core Mechanism: Explain why the brain treats good advice as a threat (psychological reactance, ego defense, cognitive dissonance, dopamine anticipation vs delayed reward).
+3. Rhythm: Short sentence. Short sentence. One longer sentence that builds depth. Short sentence. A reflective question every 4–6 sentences.
+4. Evidence Stack: Weave at least 3 real named psychological experiments, researchers, or concepts (Jack Brehm 1966 reactance theory, Leon Festinger cognitive dissonance, Daniel Kahneman, dopamine loops).
+5. Concrete Everyday Mirror: Reconstruct a common everyday struggle (doomscrolling at midnight instead of sleeping, ignoring financial or health advice, staying in comfort zones).
+6. Twist & Resolution: Refocus the struggle — it is not a lack of willpower, it is an evolutionary survival mechanism misfiring in the modern world.
+7. Closing line: Directly echoes the opening hook with a profound reframe.
 
 Write PURE narration text only — NO stage directions, NO bracketed notes, NO headings, NO asterisks. Just pure voiceover narration text.
 """
@@ -364,8 +397,9 @@ async def generate_script(
     base_url: str = "",
     custom_system_prompt: str = "",
 ) -> Dict[str, Any]:
-    """Generate script matching the DNA of flow_nen_van_minh_bi_bo_quen.txt."""
-    sys_prompt = custom_system_prompt or SYSTEM_PROMPT_CIVILIZATION
+    """Generate script matching the DNA of the chosen genre."""
+    is_psychology = any(w in topic.lower() for w in ["brain", "psychology", "advice", "bias", "behavior", "habit"])
+    sys_prompt = custom_system_prompt or (SYSTEM_PROMPT_PSYCHOLOGY if is_psychology else SYSTEM_PROMPT_CIVILIZATION)
     user_prompt = f"Topic: {topic}\n\nPlease write the full viral educational narration script based on the guidelines."
 
     if provider == "openai" or (provider in ("openrouter", "groq", "custom") and api_key):
@@ -429,24 +463,39 @@ async def generate_script(
             script_text = data["content"][0]["text"].strip()
 
     else:
-        # High-quality built-in demo script based on flow_nen_van_minh_bi_bo_quen.txt
-        script_text = (
-            f"You wake to woodsmoke and river mud. No bell. No clock.\n"
-            f"You are on the Musi river, in Srivijaya. The year is about 700.\n"
-            f"Most people think of lost kingdoms as towering stone temples and gold crowns. "
-            f"That is not your life.\n"
-            f"Your life is this small wooden boat, two paddle strokes wide.\n"
-            f"Zhou Daguan and the Kedukan Bukit inscription tell us how this water kingdom moved. "
-            f"George Coedès spent decades piecing together its ports.\n"
-            f"Before the sun cuts the mist, you untie your line. Your child is still asleep under the palm thatch.\n"
-            f"The morning market is already trading dried fish for salt blocks. "
-            f"You steer into the current, watching the monsoon winds shift.\n"
-            f"Is it courage that keeps you out here, or simply the rhythm of the tide?\n"
-            f"You know every sandbar before the empire gave it a name.\n"
-            f"By dusk, the water turns to brass. You bank the embers for the night.\n"
-            f"Twelve centuries later, you open your laptop at a desk. You check an inbox before you have decided anything.\n"
-            f"You wake to woodsmoke and river mud. Now you know the river never really stopped."
-        )
+        # High-quality built-in demo script
+        if is_psychology:
+            script_text = (
+                f"Someone gives you genuinely great advice. You nod. You agree completely. And then you do the exact opposite.\n"
+                f"Why does your brain treat sound advice like a threat?\n"
+                f"Psychologists call the first culprit psychological reactance. When someone tells you what to do, your brain hears a threat to your freedom.\n"
+                f"Jack Brehm discovered this back in 1966. The moment an option is pushed on you, your instinct is to push right back.\n"
+                f"The second culprit is cognitive dissonance. Admitting that someone else's advice is right often means admitting that your past choices were wrong.\n"
+                f"Your ego hates that. It would rather defend a painful mistake than admit a simple truth.\n"
+                f"And then there is the dopamine trap. Good advice asks you to sacrifice comfort now for a reward in three months.\n"
+                f"Your ancient limbic system didn't evolve for three months from now. It evolved to survive the next ten minutes.\n"
+                f"So tonight, when you hear that quiet voice telling you to put the phone down and go to sleep, watch what happens.\n"
+                f"You agree completely. And then your thumb keeps scrolling.\n"
+                f"Now you know: it was never a lack of discipline. It was your brain protecting itself from the wrong kind of danger."
+            )
+        else:
+            script_text = (
+                f"You wake to woodsmoke and river mud. No bell. No clock.\n"
+                f"You are on the Musi river, in Srivijaya. The year is about 700.\n"
+                f"Most people think of lost kingdoms as towering stone temples and gold crowns. "
+                f"That is not your life.\n"
+                f"Your life is this small wooden boat, two paddle strokes wide.\n"
+                f"Zhou Daguan and the Kedukan Bukit inscription tell us how this water kingdom moved. "
+                f"George Coedès spent decades piecing together its ports.\n"
+                f"Before the sun cuts the mist, you untie your line. Your child is still asleep under the palm thatch.\n"
+                f"The morning market is already trading dried fish for salt blocks. "
+                f"You steer into the current, watching the monsoon winds shift.\n"
+                f"Is it courage that keeps you out here, or simply the rhythm of the tide?\n"
+                f"You know every sandbar before the empire gave it a name.\n"
+                f"By dusk, the water turns to brass. You bank the embers for the night.\n"
+                f"Twelve centuries later, you open your laptop at a desk. You check an inbox before you have decided anything.\n"
+                f"You wake to woodsmoke and river mud. Now you know the river never really stopped."
+            )
 
     words = len(script_text.split())
     # Natural narration pace ~130-150 words per minute
@@ -821,7 +870,11 @@ def build_scene_prompts(
 ) -> List[Dict[str, Any]]:
     """Build high-consistency 2D doodle prompts with strict text control (100% English prompts)."""
     style_key = style.lower().strip() if style else "forgotten_civilizations"
-    if style_key not in STYLES_REGISTRY:
+    if any(w in style_key for w in ["brain", "advice", "psychology"]):
+        style_key = "brain_psychology"
+    elif any(w in style_key for w in ["ancient", "human"]):
+        style_key = "ancient_humans"
+    elif style_key not in STYLES_REGISTRY:
         style_key = "forgotten_civilizations"
 
     prefix = (
@@ -831,7 +884,171 @@ def build_scene_prompts(
 
     hero_clean = (hero_lock or "").strip()
 
-    if style_key == "ancient_humans":
+    if style_key == "brain_psychology":
+        suffix_no_text = (
+            ", same character design as the reference image, preserving facial features and minimalist stick figure body, "
+            "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, "
+            "no 3D render, no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
+        )
+        suffix_emphasis_text = (
+            ", same character design as the reference image, preserving facial features and minimalist stick figure body, "
+            "do not redesign the character, single bold keyword on object only, no subtitles, no paragraph text, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, "
+            "no 3D render, no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
+        )
+        if not hero_clean or ("dark brown hair" in hero_clean.lower() and "indigo tunic" in hero_clean.lower()) or "orange hair" in hero_clean.lower():
+            hero_anchor = "The main stick figure character from the reference image with a round white head"
+        else:
+            hero_anchor = hero_clean
+
+        enriched = []
+        for item in scenes:
+            txt = item["text"]
+            txt_lower = txt.lower()
+
+            # Selective concept emphasis (single bold red keyword only when defining a concept or key term)
+            matched_term = None
+            psych_terms = [
+                ("reactance", "REACTANCE"),
+                ("cognitive dissonance", "COGNITIVE DISSONANCE"),
+                ("status quo", "STATUS QUO BIAS"),
+                ("loss aversion", "LOSS AVERSION"),
+                ("confirmation bias", "CONFIRMATION BIAS"),
+                ("dopamine", "DOPAMINE"),
+                ("ego trap", "EGO TRAP"),
+                ("bias", "BIAS"),
+            ]
+            for kw, term_label in psych_terms:
+                if kw in txt_lower and any(w in txt_lower for w in ["call", "culprit", "term", "trap", "phenomenon", "known as"]) and len(txt.split()) <= 15:
+                    matched_term = term_label
+                    break
+
+            is_stat_or_year = any(w in txt_lower for w in ["percent", "1966", "1970"]) and any(c.isdigit() for c in txt) and len(txt.split()) <= 10
+
+            current_suffix = suffix_no_text
+
+            # 1. Concept definition card (only when explicitly naming a term)
+            if matched_term:
+                action = f"Plain cream background with a gray ground strip, {hero_anchor} standing beside a clean minimalist concept card with a single bold RED hand-lettered term '{matched_term}', educational psychology frame"
+                current_suffix = suffix_emphasis_text
+
+            # 2. Historical year / statistic card
+            elif is_stat_or_year:
+                label = _extract_milestone_label(txt)
+                action = f"Plain cream background with a gray ground strip, {hero_anchor} standing beside a bold RED hand-lettered text '{label}', minimal educational psychology card"
+                current_suffix = suffix_emphasis_text
+
+            # 3. Endless thumb scrolling (high priority specific action)
+            elif any(w in txt_lower for w in ["thumb", "keeps scrolling", "scrolling", "doomscroll", "feed"]):
+                action = f"Close-up shot of {hero_anchor}'s cartoon stick figure hands holding a glowing phone, thumb flicking upward repeatedly in an endless scrolling motion, glowing screen"
+
+            # 4. Ego defense / Brick wall (prioritize over general 'admit')
+            elif any(w in txt_lower for w in ["ego", "pride", "defend a painful", "defend", "simple truth"]):
+                action = f"{hero_anchor} hastily stacking a defensive cartoon brick wall in front of themselves, peeking over the top with a stubborn defensive frown, plain cream background"
+
+            # 5. Ancient survival / Limbic instinct (prioritize over 'three months')
+            elif any(w in txt_lower for w in ["ancient", "evolve", "limbic", "ten minutes", "predator", "wild"]):
+                action = f"An early ancestral human stick figure running swiftly through tall savanna grass under a hot sun, looking over shoulder alert for wild beasts, dynamic prehistoric survival atmosphere"
+
+            # 6. Late night bedroom / Phone struggle
+            elif any(w in txt_lower for w in ["put the phone down", "go to sleep", "tonight", "quiet voice", "bedtime", "lights out"]):
+                action = f"{hero_anchor} lying in bed under blankets in a dark bedroom at night, face illuminated by the bright blue glow of a smartphone screen held in hands, plain navy-dark background"
+
+            # 7. Threat to freedom & barriers
+            elif any(w in txt_lower for w in ["freedom", "told what to do", "threat to freedom", "control", "forced"]):
+                action = f"{hero_anchor} backing away defensively with hands raised, breaking away from cartoon wooden fence barriers trying to enclose their space, plain cream background"
+
+            # 8. Pushing back / Rebellion against pressure
+            elif any(w in txt_lower for w in ["push back", "push right back", "pushed on you", "instinct to push", "resist"]):
+                action = f"{hero_anchor} with a determined gritted-teeth expression leaning forward and shoving a heavy wooden crate back with two hands, stubborn resistance, plain cream background"
+
+            # 9. Ears covered / Ignoring advice
+            elif any(w in txt_lower for w in ["ignore", "deaf", "cover your ears", "cover ears", "plug your ears", "refuse to listen"]):
+                action = f"{hero_anchor} looking stubborn with hands tightly covering both ears, turning away from a large red megaphone mounted on a stand shouting soundwave symbols, plain cream background"
+
+            # 10. Giving / receiving advice & polite agreement
+            elif any(w in txt_lower for w in ["giving advice", "gives you", "friend tells", "recommend", "nod", "agree"]):
+                action = f"Two minimalist stick figures standing in friendly conversation, one person earnestly offering a helpful book while {hero_anchor} nods along politely with an agreeable smile, plain cream background"
+
+            # 11. Doing the opposite / Defiance
+            elif any(w in txt_lower for w in ["opposite", "exact opposite", "contrary", "turn around"]):
+                action = f"{hero_anchor} abruptly turning on heel and marching in the exact opposite direction of a directional signpost, walking away with a determined mischievous posture, plain cream background"
+
+            # 12. Admitting past mistakes / Regret (toy blocks)
+            elif any(w in txt_lower for w in ["admit", "past choices", "past mistake", "were wrong", "regret", "fault"]):
+                action = f"{hero_anchor} looking back over shoulder with a bashful hand scratching neck, at a messy trail of knocked-over cartoon toy blocks on the ground, plain cream background"
+
+            # 13. Comfort now vs future reward (couch vs calendar)
+            elif any(w in txt_lower for w in ["comfort now", "reward in", "three months", "sacrifice comfort", "delayed reward"]):
+                action = f"Side-by-side comparison frame: on the left {hero_anchor} lounging on a soft cozy sofa with snacks, on the right a distant mountain path with a flip calendar pointing to the future, plain cream background"
+
+            # 14. Relief / Self-compassion / Epiphany
+            elif any(w in txt_lower for w in ["now you know", "lack of discipline", "discipline", "protecting itself", "wrong kind of danger", "relief"]):
+                action = f"{hero_anchor} taking a deep relaxing breath with closed peaceful eyes, dropping a heavy cartoon sack off shoulders onto the ground, peaceful warm lighting, plain cream background"
+
+            # 15. Phone / Screen distraction
+            elif any(w in txt_lower for w in ["phone", "screen", "social media", "notification", "app"]):
+                action = f"{hero_anchor} sitting cross-legged staring in a trance at a glowing smartphone screen with thumb scrolling, tiny floating notification icons, plain cream background"
+
+            # 16. Threat perception / Defensive block
+            elif "threat" in txt_lower or ("brain" in txt_lower and any(w in txt_lower for w in ["treat", "hear", "see", "react", "danger"])):
+                action = f"{hero_anchor} standing defensive with wide alert eyes, raising arms to block an incoming friendly advice envelope as if it were a flying arrow, plain cream background"
+
+            # 16. Sleep / Alarm clock / Procrastination
+            elif any(w in txt_lower for w in ["sleep", "bed", "blanket", "morning", "night", "alarm", "clock", "procrastinat", "lazy", "delay", "tomorrow"]):
+                action = f"{hero_anchor} wrapped up like a burrito in a blue blanket lying flat on a mattress looking guilty, a ringing red alarm clock on the side table, plain cream background"
+
+            # 18. Fork in the road / Choice
+            elif any(w in txt_lower for w in ["choice", "choose", "decision", "fork", "path", "dilemma", "direction", "two options"]):
+                action = f"{hero_anchor} standing at a fork in the road with two diverging dirt paths, scratching head with a confused spiral question mark expression, plain cream background"
+
+            # 19. Overthinking / Anxiety
+            elif any(w in txt_lower for w in ["think", "overthink", "thought", "stress", "anxious", "anxiety", "spiral", "worry", "panic", "chaos"]):
+                action = f"{hero_anchor} clutching both temples with wide dizzy eyes, a large dark tangled scribble yarn cloud floating directly above their head, plain cream background"
+
+            # 20. Researcher / Study / Lab
+            elif any(w in txt_lower for w in ["brehm", "kahneman", "festinger", "scientist", "psychologist", "researcher", "study", "experiment", "lab"]):
+                action = f"A friendly scientist stick figure wearing round black glasses and a white lab coat holding a yellow clipboard, explaining data to {hero_anchor}, plain cream background"
+
+            # 21. Food / Diet temptation
+            elif any(w in txt_lower for w in ["eat", "food", "salad", "burger", "diet", "sugar", "craving", "snack"]):
+                action = f"{hero_anchor} at a dining table looking hilariously torn, holding a fork pointed towards a tiny green salad while eyes stare hypnotized at a giant juicy burger, plain cream background"
+
+            # 22. Gym / Workout / Shoes
+            elif any(w in txt_lower for w in ["gym", "workout", "exercise", "shoes", "run", "pushup"]):
+                action = f"{hero_anchor} sitting on the floor staring thoughtfully at a pair of brand-new running shoes with a guilty pensive expression, plain cream background"
+
+            # 23. False beliefs / Myth / Red X
+            elif any(w in txt_lower for w in ["myth", "wrong", "mistake", "lie", "false", "trap", "never", "illusion"]):
+                action = f"{hero_anchor} standing with folded arms and a skeptical frown, while a concept illustration behind is crossed out with a big bold RED hand-drawn X across the frame"
+
+            # 24. Desk / Modern computer work
+            elif any(w in txt_lower for w in ["laptop", "desk", "work", "office", "computer", "job"]):
+                action = f"{hero_anchor} sitting at a minimalist modern white desk with slumped posture staring blankly at a glowing laptop, plain cream background with a gray ground strip"
+
+            # 25. Lightbulb / Idea / Solution
+            elif any(w in txt_lower for w in ["realize", "solution", "habit", "trick", "secret", "lightbulb", "idea", "strategy"]):
+                action = f"{hero_anchor} with wide happy eyes pointing one finger upward, a single glowing bright yellow lightbulb floating right above their head, plain cream background"
+
+            # 26. Biological brain structure (specific gags only, rare)
+            elif any(w in txt_lower for w in ["amygdala", "cortex", "neuron", "neural", "chemical", "neuroscience"]):
+                action = f"A small cute 2D flat pink cartoon brain character wearing a tiny firefighter helmet pulling a red emergency lever on a cartoon control panel, plain cream background"
+
+            # 27. General everyday human behavioral illustration (NO PINK BRAIN SPAM!)
+            else:
+                action = f"{hero_anchor} in an expressive thoughtful pose illustrating everyday human habits and behavior, plain cream background with a gray ground strip, clean educational cartoon doodle composition"
+
+            full_prompt = f"{prefix}{action}{current_suffix}"
+            enriched.append({
+                **item,
+                "prompt": full_prompt,
+                "status": item.get("status", "pending"),
+                "image_url": item.get("image_url", ""),
+            })
+        return enriched
+
+    elif style_key == "ancient_humans":
         # Suffix with NO text allowed for normal scenes
         suffix_no_text = (
             ", same character design as the reference image, preserving facial features, spiky orange hair and stick figure body, "
@@ -996,6 +1213,211 @@ def build_scene_prompts(
                 "image_url": item.get("image_url", ""),
             })
         return enriched
+
+
+async def _call_llm_completion(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+    stream: bool = True,
+) -> str:
+    """Execute LLM chat completion with streaming support to prevent Cloudflare HTTP 524 timeouts."""
+    if stream:
+        req_payload = {**payload, "stream": True}
+        chunks: List[str] = []
+        try:
+            async with client.stream("POST", url, headers=headers, json=req_payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                chunks.append(delta)
+                        except Exception:
+                            pass
+            content = "".join(chunks).strip()
+            if content:
+                return content
+        except Exception as e:
+            logger.warning("Streaming completion encountered error, retrying without stream: %s", e)
+
+    # Fallback to standard non-streaming POST
+    req_payload = {**payload, "stream": False}
+    resp = await client.post(url, headers=headers, json=req_payload)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+
+async def generate_scene_prompts_ai(
+    scenes: List[Dict[str, Any]],
+    hero_lock: str = "",
+    topic: str = "",
+    style: str = "doodle",
+    base_url: str = "",
+    api_key: str = "",
+    model: str = "",
+    batch_size: int = 25,
+) -> List[Dict[str, Any]]:
+    """Universal AI-driven 2D doodle storyboard generator (OpenAI-compatible / Gemini 3.8 Flash).
+    
+    Feeds the FULL narration transcript and topic directly to the AI visual director in a SINGLE request.
+    Uses streaming (stream=True) to stream SSE tokens continuously, preventing Cloudflare HTTP 524 timeouts.
+    Ensures 1-shot holistic narrative comprehension, exact chronological ordering of all scene IDs,
+    and updates all timeline scenes simultaneously.
+    """
+    if not scenes:
+        return []
+
+    prefix = (
+        "Hand-drawn 2D doodle cartoon animation, flat solid colors, "
+        "bold black hand-drawn outlines, slightly wobbly imperfect marker lines, "
+    )
+
+    hero_clean = (hero_lock or "").strip()
+    hero_anchor = hero_clean or "The main stick figure character from the reference image"
+
+    suffix = (
+        ", plain cream background with a gray ground strip, "
+        "same character design as the reference image, preserving facial features and minimalist stick figure body, "
+        "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
+        "no gradients, no drop shadows, no photographic textures, no photorealism, no 3D render, "
+        "no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
+    )
+
+    burl = (base_url or STORY_AI_BASE_URL).rstrip("/")
+    key = api_key or STORY_AI_API_KEY
+    mod = model or STORY_AI_MODEL
+
+    if not key or not burl:
+        logger.warning("No AI API key or base_url configured, falling back to rule-based prompt builder.")
+        return build_scene_prompts(scenes, hero_lock, topic, style=style)
+
+    system_prompt = f"""You are an elite visual director and storyboard artist for educational 2D doodle animations (Kurzgesagt / MinutePhysics / AsapSCIENCE style).
+Story Topic: {topic or 'Educational explainer narrative'}
+Protagonist Anchor: {hero_anchor}
+
+The user provides the entire narration transcript with scene IDs.
+Your job is to read the FULL transcript from start to finish, understand the story arc, and output the visual action description for EVERY single scene in exact chronological order.
+
+CRITICAL RULES:
+1. Deeply understand the story context and genre from the topic and sentences (whether psychology, ancient history, prehistoric evolution, business, or everyday life). Adapt the environments, props, and actions naturally to match the narrative.
+2. Output MUST include EVERY scene ID from 1 to the end, in exact numerical order without skipping any scene.
+3. Every scene action must be a CONCRETE, VISUAL, PHYSICAL 2D DOODLE SCENE (12-25 words) illustrating that exact sentence.
+4. Start each action directly with the subject, e.g. "{hero_anchor} ...".
+5. STRICTLY NO TEXT IN THE DRAWING: no words, no letters, no numbers, no subtitles, no speech bubbles, no labels. The storytelling must be 100% visual through characters, props, and actions.
+6. Ensure narrative continuity and visual variety: vary compositions (medium shots, close-ups of hands/objects, two-person interactions, metaphorical objects like scales, clocks, doors, paths, ropes, walls).
+7. Return ONLY a valid JSON array of objects with keys "id" (int) and "action" (string):
+[
+  {{"id": 1, "action": "{hero_anchor} ..."}},
+  {{"id": 2, "action": "{hero_anchor} ..."}}
+]
+"""
+
+    actions_map: Dict[int, str] = {}
+    input_items = [{"id": s["id"], "text": s["text"]} for s in scenes]
+    user_prompt = (
+        f"Topic: {topic or 'Story Studio Narrative'}\n"
+        f"Total scenes: {len(scenes)}\n\n"
+        f"Full Narration Transcript:\n{json.dumps(input_items, ensure_ascii=False)}\n\n"
+        f"Generate JSON array of visual actions for ALL {len(scenes)} scenes in exact order (id 1 to {len(scenes)}):"
+    )
+
+    # Single-shot full transcript request with streaming to prevent Cloudflare 524 timeout
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        for attempt in range(2):
+            try:
+                content = await _call_llm_completion(
+                    client=client,
+                    url=f"{burl}/chat/completions",
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    payload={
+                        "model": mod,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "temperature": 0.4,
+                    },
+                    stream=True,
+                )
+                m = re.search(r"\[.*\]", content, re.DOTALL)
+                if m:
+                    parsed = json.loads(m.group(0))
+                    for item in parsed:
+                        if "id" in item and "action" in item:
+                            actions_map[int(item["id"])] = str(item["action"]).strip()
+                    logger.info("Successfully received %d/%d scene actions from AI in 1 single shot", len(actions_map), len(scenes))
+                    break
+                else:
+                    logger.warning("Attempt %d: No JSON array in AI response: %s", attempt + 1, content[:200])
+            except Exception as e:
+                logger.warning("Attempt %d failed for 1-shot full prompt generation: %s", attempt + 1, e)
+                if attempt == 0:
+                    await asyncio.sleep(2.0)
+
+    # If any scene IDs were accidentally skipped by the LLM, do a targeted fill for those few missing IDs
+    missing_ids = [s["id"] for s in scenes if s["id"] not in actions_map]
+    if missing_ids and len(missing_ids) <= 20:
+        logger.info("Filling %d missing scene IDs from AI: %s", len(missing_ids), missing_ids)
+        missing_scenes = [s for s in scenes if s["id"] in missing_ids]
+        missing_items = [{"id": s["id"], "text": s["text"]} for s in missing_scenes]
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                c = await _call_llm_completion(
+                    client=client,
+                    url=f"{burl}/chat/completions",
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    payload={
+                        "model": mod,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Generate missing scene actions in JSON array:\n{json.dumps(missing_items, ensure_ascii=False)}"},
+                        ],
+                        "temperature": 0.3,
+                    },
+                    stream=True,
+                )
+                m = re.search(r"\[.*\]", c, re.DOTALL)
+                if m:
+                    for item in json.loads(m.group(0)):
+                        if "id" in item and "action" in item:
+                            actions_map[int(item["id"])] = str(item["action"]).strip()
+        except Exception as err:
+            logger.warning("Failed to fill missing scenes with AI: %s", err)
+
+    # Fallback to rule-based for any scenes that still missed AI generation
+    rule_scenes = build_scene_prompts(scenes, hero_lock, topic, style=style)
+    rule_map = {s["id"]: s["prompt"] for s in rule_scenes}
+
+    enriched = []
+    for item in scenes:
+        sid = item["id"]
+        if sid in actions_map:
+            raw_action = actions_map[sid]
+            # Strip accidental repeated prefix/suffix from model
+            clean_act = re.sub(r"^Hand-drawn.*?marker lines,\s*", "", raw_action, flags=re.IGNORECASE)
+            clean_act = re.sub(r",\s*plain cream background.*$", "", clean_act, flags=re.IGNORECASE)
+            clean_act = re.sub(r",\s*no text.*$", "", clean_act, flags=re.IGNORECASE)
+            clean_act = clean_act.strip().rstrip(",")
+            full_prompt = f"{prefix}{clean_act}{suffix}"
+        else:
+            full_prompt = rule_map.get(sid, "")
+
+        enriched.append({
+            **item,
+            "prompt": full_prompt,
+            "status": item.get("status", "pending"),
+            "image_url": item.get("image_url", ""),
+        })
+
+    return enriched
 
 
 async def generate_single_scene_image(

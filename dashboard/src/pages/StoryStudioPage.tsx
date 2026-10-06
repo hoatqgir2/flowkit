@@ -25,10 +25,9 @@ import {
   StopCircle,
   Eraser,
   Check,
-  Palette,
-  Info,
   Pencil,
   Trash2,
+  Settings,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -106,9 +105,19 @@ export const PROMPT_STYLES: PromptStyleInfo[] = [
     default_hero_lock: 'The main stick figure character from the reference image with spiky bright orange hair',
     key_elements: ['Thảo nguyên savanna cây keo (acacia)', 'Tảng đá lớn dán nhãn chữ trắng (SURVIVAL)', 'Lửa trại bộ lạc & nhà khảo cổ nón cối', 'Mây mưa gian khổ & Dấu X đỏ phủ định'],
   },
+  {
+    id: 'brain_psychology',
+    name: 'Tâm Lý Học Não Bộ (Why Brain Ignores Advice)',
+    short_desc: 'Doodle tâm lý học, não bộ hồng 2D ngộ nghĩnh, lời khuyên bị phớt lờ, thiên kiến nhận thức',
+    description_vi: 'Phong cách hoạt hình doodle 2D chuyên đề Tâm lý học & Khoa học Hành vi (Psychology & Behavioral Neuroscience). Nhân vật que tối giản tương tác cùng bộ não hoạt hình 2D màu hồng pastel/san hô với biểu cảm ngộ nghĩnh (bối rối, lười biếng, hoảng sợ), người que bịt tai phớt lờ loa phóng thanh lời khuyên, đám mây suy nghĩ rối như tơ vò, bẫy dopamine lướt điện thoại, ngã rẽ thói quen và các thí nghiệm tâm lý với dấu X đỏ phủ định.',
+    badge_color: 'bg-rose-950/70 text-rose-300 border-rose-800/60',
+    default_hero_lock: 'The main minimalist stick figure character from the reference image with a round white head',
+    key_elements: ['Bộ não hoạt hình 2D màu hồng biểu cảm', 'Người que bịt tai phớt lờ loa phóng thanh', 'Bẫy dopamine (lướt điện thoại, giường ngủ)', 'Đám mây suy nghĩ rối rắm & Thiên kiến nhận thức'],
+  },
 ]
 
 const PRESET_TOPICS = [
+  { label: 'Tại sao não bộ phớt lờ lời khuyên hay', topic: 'Why your brain ignores good advice: psychological reactance, cognitive dissonance, and the ego trap' },
   { label: 'Srivijaya & Người biển Musi', topic: 'Srivijaya and the Orang Laut river people in the year 700' },
   { label: 'Làng gốm ngoại thành Angkor', topic: 'Khmer village life and pottery making around Angkor in 1150' },
   { label: 'Con đường muối Mali - Timbuktu', topic: 'Mali salt trader and camel caravan routes in 1324' },
@@ -176,6 +185,14 @@ export default function StoryStudioPage() {
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false)
   const [isDeletingProject, setIsDeletingProject] = useState<boolean>(false)
 
+  // AI Prompt Generation State (OpenAI-compatible / Gemini 3.8 Flash)
+  const [isAiBuildingPrompts, setIsAiBuildingPrompts] = useState<boolean>(false)
+  const [aiBuildingSceneId, setAiBuildingSceneId] = useState<number | null>(null)
+  const [aiBaseUrl, setAiBaseUrl] = useState<string>(() => localStorage.getItem('fk_story_ai_base_url') || 'https://ai.tuvimoi.com/v1')
+  const [aiApiKey, setAiApiKey] = useState<string>(() => localStorage.getItem('fk_story_ai_api_key') || 'sk-dfc0e3c70d85fe58-t4zf4c-444c53ec')
+  const [aiModel, setAiModel] = useState<string>(() => localStorage.getItem('fk_story_ai_model') || 'ag/gemini-3.8-flash-high')
+  const [showAiPromptConfig, setShowAiPromptConfig] = useState<boolean>(false)
+
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   // Save keys & batch settings to localStorage
@@ -191,6 +208,15 @@ export default function StoryStudioPage() {
   useEffect(() => {
     if (groqKey) localStorage.setItem('fk_groq_key', groqKey)
   }, [groqKey])
+  useEffect(() => {
+    if (aiBaseUrl) localStorage.setItem('fk_story_ai_base_url', aiBaseUrl)
+  }, [aiBaseUrl])
+  useEffect(() => {
+    if (aiApiKey) localStorage.setItem('fk_story_ai_api_key', aiApiKey)
+  }, [aiApiKey])
+  useEffect(() => {
+    if (aiModel) localStorage.setItem('fk_story_ai_model', aiModel)
+  }, [aiModel])
   useEffect(() => {
     localStorage.setItem('fk_batch_delay_min', String(delayMin))
   }, [delayMin])
@@ -648,6 +674,51 @@ export default function StoryStudioPage() {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi build prompt' })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleBuildPromptsAI = async (sceneId?: number) => {
+    if (!currentProject || !currentProject.scenes?.length) return
+    setIsAiBuildingPrompts(true)
+    if (sceneId !== undefined) {
+      setAiBuildingSceneId(sceneId)
+    }
+    const totalScenes = currentProject.scenes.length
+    setStatusMsg({
+      type: 'ok',
+      text: sceneId !== undefined
+        ? `Đang dùng AI (${aiModel}) sinh prompt bám sát kịch bản cho cảnh #${sceneId}...`
+        : `Đang gửi toàn bộ transcript (${totalScenes} câu) vào AI (${aiModel}) trong 1 lượt duy nhất để sinh prompt đồng bộ cho tất cả timeline (vui lòng chờ)...`,
+    })
+
+    try {
+      const activeStyle = promptStyle || currentProject.prompt_style || 'brain_psychology'
+      const res = await fetchAPI<any>(`/api/story-studio/projects/${currentProject.id}/generate-prompts-ai`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          style: activeStyle,
+          hero_lock: heroLock,
+          base_url: aiBaseUrl.trim(),
+          api_key: aiApiKey.trim(),
+          model: aiModel.trim(),
+          scene_id: sceneId,
+        }),
+      })
+
+      setCurrentProject(prev => prev ? { ...prev, scenes: res.scenes, prompt_style: activeStyle } : null)
+      setPromptStyle(activeStyle)
+      setStatusMsg({
+        type: 'ok',
+        text: sceneId !== undefined
+          ? `✨ Đã sinh xong prompt AI cho cảnh #${sceneId}!`
+          : `✨ Đã nhận đầy đủ prompt từ AI trong 1 lượt gửi và cập nhật đồng bộ cho tất cả ${res.scenes?.length || 0} timeline!`,
+      })
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi sinh prompt bằng AI' })
+    } finally {
+      setIsAiBuildingPrompts(false)
+      setAiBuildingSceneId(null)
     }
   }
 
@@ -1257,7 +1328,7 @@ export default function StoryStudioPage() {
                       className="w-full bg-slate-950 border border-slate-700/80 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
                     />
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       size="sm"
                       variant="outline"
@@ -1272,9 +1343,21 @@ export default function StoryStudioPage() {
                     </Button>
                     <Button
                       size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => {
+                        const val = 'The main minimalist stick figure character from the reference image with a round white head'
+                        setHeroLock(val)
+                      }}
+                      className="text-[10px] border-slate-700 hover:bg-slate-800 text-rose-300 whitespace-nowrap"
+                    >
+                      Đầu Tròn Tối Giản (Tâm Lý Học)
+                    </Button>
+                    <Button
+                      size="sm"
                       onClick={handleSaveHeroLock}
                       disabled={loading}
-                      className="flex-1 text-xs bg-amber-600 hover:bg-amber-500 text-white"
+                      className="flex-1 text-xs bg-amber-600 hover:bg-amber-500 text-white min-w-[120px]"
                     >
                       Lưu Khóa Nhân Vật
                     </Button>
@@ -1877,86 +1960,121 @@ export default function StoryStudioPage() {
                   </div>
                 </div>
 
-                {/* ── STYLE SELECTOR WITH VIETNAMESE EXPLANATION ── */}
-                <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
+                {/* ── AI PROMPT GENERATOR & DOODLE MASTER FRAMEWORK ── */}
+                <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Palette className="w-4 h-4 text-amber-400" />
-                      <span className="text-xs font-semibold text-slate-200">Phong Cách Tạo Prompt (Doodle Art Style):</span>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-purple-400" />
+                        <span className="text-xs font-bold text-slate-100">
+                          Tạo Prompt Cho Từng Ảnh Bằng AI (2D Doodle Animation)
+                        </span>
+                        <span className="text-[10px] bg-purple-500/10 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-medium">
+                          {aiModel}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 max-w-2xl">
+                        AI sẽ đọc toàn bộ transcript, tự động hiểu bối cảnh chủ đề và sinh prompt hành động trực quan cho từng ảnh, kết hợp với nhân vật tham chiếu & bộ khung bắt buộc (100% Không chữ, 16:9 widescreen).
+                      </p>
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
-                      <div className="inline-flex p-1 bg-slate-900 border border-slate-800 rounded-lg">
-                        {PROMPT_STYLES.map(st => (
-                          <button
-                            key={st.id}
-                            type="button"
-                            onClick={() => setPromptStyle(st.id)}
-                            className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                              promptStyle === st.id
-                                ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
-                                : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                          >
-                            {st.name}
-                          </button>
-                        ))}
-                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleBuildPromptsAI()}
+                        disabled={loading || isAiBuildingPrompts || !currentProject?.scenes?.length}
+                        className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs gap-1.5 h-8 font-semibold shadow-md shadow-purple-600/30"
+                        title="Đưa toàn bộ transcript vào AI (OpenAI Compatible) để sinh prompt chuẩn xác theo kịch bản"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 text-purple-200 ${isAiBuildingPrompts && aiBuildingSceneId === null ? 'animate-spin' : ''}`} />
+                        {isAiBuildingPrompts && aiBuildingSceneId === null ? 'AI Đang Sinh Prompt...' : '✨ Tạo Toàn Bộ Bằng AI'}
+                      </Button>
 
                       <Button
                         size="sm"
-                        onClick={() => handleBuildPrompts(promptStyle)}
-                        disabled={loading || !currentProject?.scenes?.length}
-                        className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 h-8 font-medium shadow-sm shadow-amber-600/20"
-                        title="Tái tạo lại prompt cho tất cả cảnh theo phong cách đang chọn"
+                        variant="outline"
+                        onClick={() => handleBuildPrompts('doodle')}
+                        disabled={loading || isAiBuildingPrompts || !currentProject?.scenes?.length}
+                        className="border-slate-700 hover:bg-slate-800 text-slate-300 text-xs gap-1.5 h-8 font-medium"
+                        title="Tạo prompt nhanh theo mẫu quy tắc có sẵn (không dùng AI)"
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                        Tái Tạo Prompt
+                        <RotateCw className="w-3.5 h-3.5 text-slate-400" />
+                        Tạo Nhanh (Mẫu)
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setShowAiPromptConfig(!showAiPromptConfig)}
+                        className={`text-xs h-8 px-2 transition-colors ${showAiPromptConfig ? 'text-purple-400 bg-purple-950/40' : 'text-slate-400 hover:text-slate-200'}`}
+                        title="Cài đặt kết nối AI Prompt (OpenAI Compatible URL, Key, Model)"
+                      >
+                        <Settings className="w-3.5 h-3.5" />
                       </Button>
                     </div>
                   </div>
 
-                  {/* Quick Vietnamese explanation banner */}
-                  {(() => {
-                    const activeStyleInfo = PROMPT_STYLES.find(s => s.id === promptStyle) || PROMPT_STYLES[0]
-                    const isDifferentFromProject = currentProject?.prompt_style && currentProject.prompt_style !== promptStyle
-                    return (
-                      <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800/90 text-xs space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-amber-300 flex items-center gap-1.5">
-                              <Info className="w-3.5 h-3.5 text-amber-400" />
-                              Giải nghĩa nhanh ({activeStyleInfo.name}):
-                            </span>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${activeStyleInfo.badge_color}`}>
-                              {activeStyleInfo.short_desc}
-                            </span>
-                          </div>
-                          {isDifferentFromProject && (
-                            <span className="text-[11px] text-amber-400/90 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse">
-                              ⚠️ Đã đổi phong cách — Bấm "Tái Tạo Prompt" để cập nhật các cảnh
-                            </span>
-                          )}
+                  {/* Core Master Rules Badge Strip */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-900 text-[11px]">
+                    <span className="text-slate-500 font-medium">Khung chuẩn bắt buộc:</span>
+                    <span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded text-amber-300/90 font-mono text-[10px]">
+                      Hand-drawn 2D doodle cartoon, bold marker lines
+                    </span>
+                    <span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded text-emerald-300/90 font-mono text-[10px]">
+                      Khóa nhân vật tham chiếu (Hero Lock)
+                    </span>
+                    <span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded text-rose-300/90 font-mono text-[10px]">
+                      Nghiêm cấm chữ / No subtitles
+                    </span>
+                    <span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded text-sky-300/90 font-mono text-[10px]">
+                      16:9 Widescreen
+                    </span>
+                  </div>
+
+                  {/* AI Prompt Configuration Panel */}
+                  {showAiPromptConfig && (
+                    <div className="p-3 bg-slate-900/90 border border-purple-500/30 rounded-xl space-y-2 text-xs mt-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-purple-300 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                          Cấu hình AI Prompt (OpenAI Compatible)
+                        </span>
+                        <span className="text-[10px] text-slate-400">Tự động lưu vào trình duyệt</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-1">API Base URL:</label>
+                          <input
+                            type="text"
+                            value={aiBaseUrl}
+                            onChange={e => setAiBaseUrl(e.target.value)}
+                            placeholder="https://ai.tuvimoi.com/v1"
+                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs font-mono"
+                          />
                         </div>
-
-                        <p className="text-slate-300 leading-relaxed text-[11px]">
-                          {activeStyleInfo.description_vi}
-                        </p>
-
-                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                          <span className="text-[10px] text-slate-400 font-medium mr-1">Chi tiết nhận diện:</span>
-                          {activeStyleInfo.key_elements.map((el, idx) => (
-                            <span
-                              key={idx}
-                              className="text-[10px] bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-300"
-                            >
-                              ✓ {el}
-                            </span>
-                          ))}
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-1">Model Name:</label>
+                          <input
+                            type="text"
+                            value={aiModel}
+                            onChange={e => setAiModel(e.target.value)}
+                            placeholder="ag/gemini-3.8-flash-high"
+                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-1">API Key:</label>
+                          <input
+                            type="password"
+                            value={aiApiKey}
+                            onChange={e => setAiApiKey(e.target.value)}
+                            placeholder="sk-..."
+                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs font-mono"
+                          />
                         </div>
                       </div>
-                    )
-                  })()}
+                    </div>
+                  )}
                 </div>
 
                 {/* Batch Config Controls: Delay giữa mỗi ảnh, Timeout */}
@@ -2259,8 +2377,20 @@ export default function StoryStudioPage() {
                     </div>
                   </details>
 
-                  {/* Action Buttons: Regenerate & Remove Watermark */}
+                  {/* Action Buttons: AI Prompt, Regenerate & Remove Watermark */}
                   <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleBuildPromptsAI(sc.id)}
+                      disabled={isAiBuildingPrompts && aiBuildingSceneId === sc.id}
+                      className="text-[10px] h-7 border-purple-500/40 hover:bg-purple-950/40 text-purple-300 gap-1 px-2"
+                      title="Dùng AI viết lại prompt riêng bám sát câu thoại này"
+                    >
+                      <Sparkles className={`w-3 h-3 text-purple-300 ${isAiBuildingPrompts && aiBuildingSceneId === sc.id ? 'animate-spin' : ''}`} />
+                      {isAiBuildingPrompts && aiBuildingSceneId === sc.id ? 'Đang viết...' : 'AI Prompt'}
+                    </Button>
+
                     <Button
                       size="sm"
                       variant="outline"

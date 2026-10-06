@@ -78,11 +78,16 @@ tham chiếu    LLM theo      Audio        Transcript    Doodle 2D     FFmpeg + 
   - **Delay giữa các lượt (Cooldown):** Tùy chỉnh số giây nghỉ giữa các lượt batch (ví dụ: `5` giây sau khi lượt trước kết thúc) để tránh bị Google Flow chặn tốc độ (rate limit / unusual activity).
   - **Timeout mỗi ảnh:** Giới hạn thời gian tạo tối đa cho mỗi ảnh (mặc định `60` giây / 1 phút). Nếu quá thời gian này mà ảnh chưa trả về, hệ thống tự ngắt và đánh dấu cảnh đó là thất bại (`failed`), không làm treo các cảnh còn lại hay toàn bộ tiến trình.
   - **Nút Stop All (Dừng Tất Cả):** Nút dừng khẩn cấp màu đỏ (nhấp nháy khi có ảnh đang tạo). Khi bấm, lập tức ngắt kết nối toàn bộ các request tạo ảnh đang chạy dở (`AbortController`), hủy đợt batch tiếp theo và đưa các cảnh đang dở về trạng thái `pending` an toàn mà không cần F5 trình duyệt.
+- **Sinh Prompt Bằng AI (OpenAI Compatible - Gemini 3.8 Flash):**
+  - **✨ Nút Tạo Prompt Bằng AI:** Đưa toàn bộ transcript hoặc từng cảnh vào mô hình AI (`ag/gemini-3.8-flash-high` qua endpoint `https://ai.tuvimoi.com/v1`) để đóng vai đạo diễn hình ảnh visual storyboard. AI tự động chuyển hóa từng câu thoại thành hành động vật lý cụ thể, tình huống đời thường và ẩn dụ hình ảnh sinh động bám sát 100% dòng chảy kịch bản.
+  - **✨ Nút AI Prompt riêng cho từng cảnh:** Cho phép bấm tạo lại câu prompt riêng cho từng phân cảnh bất kỳ trên lưới ảnh.
+  - **Cấu hình AI linh hoạt:** Có bảng cài đặt cho phép kiểm tra và tùy biến `API Base URL`, `Model Name`, `API Key`, tự động lưu vào trình duyệt.
 - **Tùy Chọn Phong Cách Prompt (Prompt Art Style):**
   - **Nền Văn Minh Bị Bỏ Quên (`forgotten_civilizations` - Mặc định):** Đời thường cổ đại (chèo thuyền độc mộc trên sông Musi, nhà sàn gỗ rustic, chợ buôn bán muối/cá, phế tích đền đài gạch chéo đỏ X để xóa bỏ ảo tưởng cung điện).
   - **Con Người Cổ Đại & Tiến Hóa (`ancient_humans` - Ancient Humans Master Prompt):** Tiền sử, tiến hóa và sinh tồn nhân loại. Nhân vật que đầu tròn tóc cam nhọn (#F58220) hoặc người tiền sử tóc nâu xù. Đặc trưng: tảng đá dán nhãn chữ trắng ALL-CAPS (SURVIVAL), thảo nguyên savanna cây keo lẻ loi, mây mưa khó khăn, lửa trại bộ lạc, nhà khảo cổ nón cối, dấu X đỏ phủ định.
+  - **Tâm Lý Học Não Bộ & Lời Khuyên (`brain_psychology` - "Why your brain ignores good advice"):** Tâm lý học nhận thức, thiên kiến và hành vi. Nhân vật que tối giản đầu tròn minh họa hành động đời thường, bịt tai phớt lờ loa phóng thanh, đẩy lùi thùng gỗ phản kháng, xây tường gạch cái tôi cố thủ, bẫy dopamine lướt điện thoại ban đêm, bản năng sinh tồn xavan thời tiền sử, ngã rẽ lựa chọn và thẻ định nghĩa tâm lý chữ đỏ tối giản (không spam hình não hồng).
   - **Giải nghĩa nhanh tiếng Việt trực quan:** Giao diện có khung giải thích chi tiết ý nghĩa và các chi tiết nhận diện của từng phong cách khi chọn.
-  - **Nút Tái Tạo Prompt Theo Phong Cách Này:** Tự động build lại toàn bộ prompt cho toàn bộ phân cảnh chuẩn 100% theo phong cách đã chọn.
+  - **Nút Tái Tạo Nhanh (Mẫu):** Tự động sinh prompt theo bộ quy tắc mẫu mà không cần gọi AI.
 - **Tạo prompt theo chuẩn Rule 2:**
   - Chỉ mô tả **hành động & bối cảnh** (ngồi làm việc với laptop, đứng chèo thuyền, đi chợ, săn thú, thảo nguyên savanna...).
   - Tuyệt đối không mô tả màu tóc/quần áo xung đột với ảnh tham chiếu.
