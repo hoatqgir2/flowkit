@@ -24,7 +24,11 @@ import {
   X,
   StopCircle,
   Eraser,
-  Check
+  Check,
+  Palette,
+  Info,
+  Pencil,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -70,7 +74,39 @@ interface StoryProject {
   video_url?: string
   video_size?: number
   has_subtitles?: boolean
+  prompt_style?: string
 }
+
+export interface PromptStyleInfo {
+  id: string
+  name: string
+  short_desc: string
+  description_vi: string
+  badge_color: string
+  default_hero_lock: string
+  key_elements: string[]
+}
+
+export const PROMPT_STYLES: PromptStyleInfo[] = [
+  {
+    id: 'forgotten_civilizations',
+    name: 'Nền Văn Minh Bị Bỏ Quên (Mặc định)',
+    short_desc: 'Đời thường cổ đại, sông nước, chợ làng, đền đài gạch chéo đỏ',
+    description_vi: 'Phong cách hoạt hình doodle 2D tái hiện đời thường của các nền văn minh ít người biết (Srivijaya, Angkor, Mali, Aksum...). Nhân vật người que mộc mạc khóa theo ảnh tham chiếu, trang phục & công việc gắn liền với sông nước, chợ phiên trao đổi cá/muối, nhà sàn gỗ và phế tích đền đài bị gạch chéo đỏ X để xóa bỏ ảo tưởng cung điện/vàng bạc.',
+    badge_color: 'bg-amber-950/70 text-amber-300 border-amber-800/60',
+    default_hero_lock: 'The main stick figure character from the reference image',
+    key_elements: ['Thuyền độc mộc & sông nước', 'Chợ phiên đồ gốm, cá & muối', 'Đền đài gạch chéo đỏ X', 'Khóa theo ảnh nhân vật tham chiếu'],
+  },
+  {
+    id: 'ancient_humans',
+    name: 'Con Người Cổ Đại & Tiến Hóa (Ancient Humans)',
+    short_desc: 'Doodle tiền sử, thảo nguyên savanna, tảng đá dán nhãn, lửa trại bộ lạc',
+    description_vi: 'Phong cách doodle 2D chuẩn Ancient Humans về nhân chủng học, tiến hóa và sinh tồn tiền sử. Nhân vật que đầu tròn tóc cam nhọn đặc trưng (#F58220) hoặc người tiền sử tóc nâu xù. Đặc trưng: tảng đá dán nhãn chữ trắng ALL-CAPS (SURVIVAL), thảo nguyên savanna cây keo lẻ loi, mây mưa khó khăn, lửa trại bộ lạc, nhà khảo cổ nón cối, dấu X đỏ phủ định.',
+    badge_color: 'bg-orange-950/70 text-orange-300 border-orange-800/60',
+    default_hero_lock: 'The main stick figure character from the reference image with spiky bright orange hair',
+    key_elements: ['Thảo nguyên savanna cây keo (acacia)', 'Tảng đá lớn dán nhãn chữ trắng (SURVIVAL)', 'Lửa trại bộ lạc & nhà khảo cổ nón cối', 'Mây mưa gian khổ & Dấu X đỏ phủ định'],
+  },
+]
 
 const PRESET_TOPICS = [
   { label: 'Srivijaya & Người biển Musi', topic: 'Srivijaya and the Orang Laut river people in the year 700' },
@@ -113,6 +149,7 @@ export default function StoryStudioPage() {
 
   // Stage 5 State (Images)
   const [imageModel, setImageModel] = useState<string>('BELUGA')
+  const [promptStyle, setPromptStyle] = useState<string>('forgotten_civilizations')
   const [delayMin, setDelayMin] = useState<number>(() => {
     const saved = localStorage.getItem('fk_batch_delay_min')
     return saved !== null ? Number(saved) : 5
@@ -131,6 +168,13 @@ export default function StoryStudioPage() {
   // Stage 6 State (Video)
   const [burnSubtitles, setBurnSubtitles] = useState<boolean>(true)
   const [renderingVideo, setRenderingVideo] = useState<boolean>(false)
+
+  // Project Rename & Delete State
+  const [isEditingTitle, setIsEditingTitle] = useState<boolean>(false)
+  const [editTitleInput, setEditTitleInput] = useState<string>('')
+  const [isSavingTitle, setIsSavingTitle] = useState<boolean>(false)
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false)
+  const [isDeletingProject, setIsDeletingProject] = useState<boolean>(false)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
@@ -165,7 +209,7 @@ export default function StoryStudioPage() {
       if (!currentProject && data.projects?.length > 0) {
         loadProjectDetail(data.projects[0].id)
       } else if (!currentProject && data.projects?.length === 0) {
-        createNewProject('Câu Chuyện Nền Văn Minh Mới')
+        createNewProject('Câu Chuyện Mới')
       }
     } catch (e: any) {
       console.error('Failed to load projects', e)
@@ -182,6 +226,7 @@ export default function StoryStudioPage() {
       const proj = await fetchAPI<StoryProject>(`/api/story-studio/projects/${id}`)
       setCurrentProject(proj)
       setHeroLock(proj.hero_lock || '')
+      setPromptStyle(proj.prompt_style || 'forgotten_civilizations')
       if (proj.flow_project_id) {
         setFlowProjectId(proj.flow_project_id)
         localStorage.setItem('fk_last_flow_project_id', proj.flow_project_id)
@@ -204,9 +249,10 @@ export default function StoryStudioPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: customTitle || `Dự án Văn Minh ${new Date().toLocaleDateString('vi-VN')}`,
+          title: customTitle || `Dự án Story ${new Date().toLocaleDateString('vi-VN')}`,
           keyword: topic || '',
           hero_lock: heroLock || undefined,
+          prompt_style: promptStyle || 'forgotten_civilizations',
         }),
       })
       await loadProjects()
@@ -217,6 +263,72 @@ export default function StoryStudioPage() {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi khi tạo dự án' })
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ── Project Rename & Delete Handlers ──────────────────────────────
+  const handleStartEditTitle = () => {
+    if (!currentProject) return
+    setEditTitleInput(currentProject.title || '')
+    setIsEditingTitle(true)
+  }
+
+  const handleCancelEditTitle = () => {
+    setIsEditingTitle(false)
+    setEditTitleInput('')
+  }
+
+  const handleSaveTitle = async () => {
+    if (!currentProject) return
+    const trimmed = editTitleInput.trim()
+    if (!trimmed) {
+      setStatusMsg({ type: 'err', text: 'Tên dự án không được để trống' })
+      return
+    }
+    if (trimmed === currentProject.title) {
+      setIsEditingTitle(false)
+      return
+    }
+    try {
+      setIsSavingTitle(true)
+      const updated = await fetchAPI<StoryProject>(`/api/story-studio/projects/${currentProject.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      })
+      setCurrentProject(prev => prev ? { ...prev, title: updated.title } : null)
+      setProjects(prev => prev.map(p => p.id === currentProject.id ? { ...p, title: updated.title } : p))
+      setIsEditingTitle(false)
+      setStatusMsg({ type: 'ok', text: `Đã đổi tên dự án thành "${updated.title}"!` })
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi khi đổi tên dự án' })
+    } finally {
+      setIsSavingTitle(false)
+    }
+  }
+
+  const handleDeleteProject = async () => {
+    if (!currentProject) return
+    try {
+      setIsDeletingProject(true)
+      const deletedTitle = currentProject.title
+      await fetchAPI(`/api/story-studio/projects/${currentProject.id}`, {
+        method: 'DELETE',
+      })
+      setShowDeleteModal(false)
+      const remaining = projects.filter(p => p.id !== currentProject.id)
+      setProjects(remaining)
+      setStatusMsg({ type: 'ok', text: `Đã xóa dự án "${deletedTitle}" thành công!` })
+      if (remaining.length > 0) {
+        await loadProjectDetail(remaining[0].id)
+      } else {
+        setCurrentProject(null)
+        await createNewProject('Câu Chuyện Mới')
+      }
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi khi xóa dự án' })
+    } finally {
+      setIsDeletingProject(false)
     }
   }
 
@@ -271,7 +383,7 @@ export default function StoryStudioPage() {
   const handleGenerateScript = async () => {
     if (!currentProject) return
     if (!topic.trim()) {
-      setStatusMsg({ type: 'err', text: 'Vui lòng nhập chủ đề / từ khóa nền văn minh' })
+      setStatusMsg({ type: 'err', text: 'Vui lòng nhập chủ đề / từ khóa' })
       return
     }
     try {
@@ -515,17 +627,23 @@ export default function StoryStudioPage() {
   }
 
   // ── Stage 5: Scene Prompts & Images ─────────────────────────────────
-  const handleBuildPrompts = async () => {
+  const handleBuildPrompts = async (targetStyle?: string) => {
     if (!currentProject) return
+    const activeStyle = targetStyle || promptStyle || 'forgotten_civilizations'
     try {
       setLoading(true)
       const res = await fetchAPI<any>(`/api/story-studio/projects/${currentProject.id}/build-prompts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hero_lock: heroLock }),
+        body: JSON.stringify({ hero_lock: heroLock, style: activeStyle }),
       })
-      setCurrentProject(prev => prev ? { ...prev, scenes: res.scenes } : null)
-      setStatusMsg({ type: 'ok', text: 'Đã xây dựng lại prompt Doodle với Hero Lock cho tất cả cảnh!' })
+      setCurrentProject(prev => prev ? { ...prev, scenes: res.scenes, prompt_style: activeStyle } : null)
+      setPromptStyle(activeStyle)
+      const matched = PROMPT_STYLES.find(s => s.id === activeStyle)
+      setStatusMsg({
+        type: 'ok',
+        text: `Đã tái tạo prompt Doodle chuẩn phong cách "${matched?.name || activeStyle}" cho tất cả ${res.scenes?.length || 0} cảnh!`
+      })
     } catch (e: any) {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi build prompt' })
     } finally {
@@ -872,7 +990,7 @@ export default function StoryStudioPage() {
   // Steps Definition
   const STAGES = [
     { num: 1, title: 'Nhân Vật Tham Chiếu', icon: User, desc: 'Hero Lock cố định' },
-    { num: 2, title: 'Kịch Bản Văn Minh', icon: FileText, desc: 'DNA 2nd-person' },
+    { num: 2, title: 'Kịch Bản ', icon: FileText, desc: 'DNA 2nd-person' },
     { num: 3, title: 'Thu Âm Minimax', icon: Mic, desc: 'T2A v2 Audio' },
     { num: 4, title: 'Bóc Tách Transcript', icon: Clock, desc: 'Khớp mốc thời gian' },
     { num: 5, title: 'Tạo Ảnh Doodle', icon: ImageIcon, desc: 'Khớp nhân vật gốc' },
@@ -890,9 +1008,6 @@ export default function StoryStudioPage() {
           <div>
             <h1 className="text-xl font-bold tracking-tight flex items-center gap-2">
               Doodle Story Studio
-              <Badge variant="outline" className="bg-amber-500/10 text-amber-300 border-amber-500/30 text-xs py-0.5">
-                Nền Văn Minh Bị Bỏ Quên
-              </Badge>
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
               Quy trình khép kín: Nhân vật tham chiếu ➔ Kịch bản LLM ➔ Giọng đọc Minimax ➔ Transcript ➔ Ảnh Doodle ➔ Ghép Video
@@ -900,23 +1015,84 @@ export default function StoryStudioPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {projects.length > 0 && (
-            <select
-              value={currentProject?.id || ''}
-              onChange={e => loadProjectDetail(e.target.value)}
-              className="bg-slate-900 border border-slate-700 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-500 max-w-[220px] truncate"
-            >
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.title}</option>
-              ))}
-            </select>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isEditingTitle ? (
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-amber-500/60 rounded-lg px-2.5 py-1 shadow-md shadow-amber-500/10">
+              <input
+                type="text"
+                value={editTitleInput}
+                onChange={e => setEditTitleInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveTitle()
+                  if (e.key === 'Escape') handleCancelEditTitle()
+                }}
+                autoFocus
+                placeholder="Nhập tên dự án..."
+                className="bg-transparent text-xs text-slate-100 focus:outline-none w-48 sm:w-64 font-medium"
+              />
+              <Button
+                size="sm"
+                onClick={handleSaveTitle}
+                disabled={isSavingTitle}
+                className="h-6 px-2 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] gap-1"
+              >
+                <Check className="w-3 h-3" /> Lưu
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCancelEditTitle}
+                className="h-6 px-1.5 text-slate-400 hover:text-white text-[11px]"
+              >
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          ) : (
+            projects.length > 0 && (
+              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-lg p-1">
+                <select
+                  value={currentProject?.id || ''}
+                  onChange={e => loadProjectDetail(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[200px] sm:max-w-[260px] truncate font-medium text-slate-200"
+                >
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.title}</option>
+                  ))}
+                </select>
+
+                {currentProject && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={handleStartEditTitle}
+                      title="Sửa tên dự án này"
+                      className="h-7 px-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 text-xs gap-1"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Sửa tên</span>
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setShowDeleteModal(true)}
+                      title="Xóa dự án này"
+                      className="h-7 px-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 text-xs gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Xóa</span>
+                    </Button>
+                  </>
+                )}
+              </div>
+            )
           )}
 
           <Button
             size="sm"
             onClick={() => createNewProject()}
-            className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5"
+            className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 shrink-0"
           >
             <Plus className="w-3.5 h-3.5" /> Tạo Dự Án Mới
           </Button>
@@ -1113,14 +1289,14 @@ export default function StoryStudioPage() {
         )}
 
         {/* ═════════════════════════════════════════════════════════════ */}
-        {/* STAGE 2: KỊCH BẢN VĂN MINH (LLM GENERATOR)                    */}
+        {/* STAGE 2: KỊCH BẢN (LLM GENERATOR)                    */}
         {/* ═════════════════════════════════════════════════════════════ */}
         {activeStage === 2 && (
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
             <Card className="md:col-span-5 p-5 bg-slate-900/80 border-slate-800 space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2 mb-1">
-                  <FileText className="w-4 h-4" /> 2. Tạo Kịch Bản Theo DNA Văn Minh
+                  <FileText className="w-4 h-4" /> 2. Tạo Kịch Bản
                 </h3>
                 <p className="text-xs text-slate-400">
                   Kịch bản ngôi thứ hai ("You wake to..."), nhịp câu ngắn-ngắn-dài, đưa vào 3 bằng chứng lịch sử và soi chiếu cuộc sống hiện đại.
@@ -1648,15 +1824,6 @@ export default function StoryStudioPage() {
 
                     <Button
                       size="sm"
-                      variant="outline"
-                      onClick={handleBuildPrompts}
-                      className="text-xs border-slate-700"
-                    >
-                      Tái Tạo Prompt
-                    </Button>
-
-                    <Button
-                      size="sm"
                       onClick={handleGenerateMissingScenes}
                       disabled={isBatchGenerating || missingCount === 0}
                       className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 font-semibold shadow-md shadow-amber-600/20"
@@ -1708,6 +1875,88 @@ export default function StoryStudioPage() {
                       Tiếp Tục Ghép Video <ChevronRight className="w-3.5 h-3.5" />
                     </Button>
                   </div>
+                </div>
+
+                {/* ── STYLE SELECTOR WITH VIETNAMESE EXPLANATION ── */}
+                <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Palette className="w-4 h-4 text-amber-400" />
+                      <span className="text-xs font-semibold text-slate-200">Phong Cách Tạo Prompt (Doodle Art Style):</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="inline-flex p-1 bg-slate-900 border border-slate-800 rounded-lg">
+                        {PROMPT_STYLES.map(st => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => setPromptStyle(st.id)}
+                            className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                              promptStyle === st.id
+                                ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {st.name}
+                          </button>
+                        ))}
+                      </div>
+
+                      <Button
+                        size="sm"
+                        onClick={() => handleBuildPrompts(promptStyle)}
+                        disabled={loading || !currentProject?.scenes?.length}
+                        className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 h-8 font-medium shadow-sm shadow-amber-600/20"
+                        title="Tái tạo lại prompt cho tất cả cảnh theo phong cách đang chọn"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                        Tái Tạo Prompt
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Quick Vietnamese explanation banner */}
+                  {(() => {
+                    const activeStyleInfo = PROMPT_STYLES.find(s => s.id === promptStyle) || PROMPT_STYLES[0]
+                    const isDifferentFromProject = currentProject?.prompt_style && currentProject.prompt_style !== promptStyle
+                    return (
+                      <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800/90 text-xs space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-amber-300 flex items-center gap-1.5">
+                              <Info className="w-3.5 h-3.5 text-amber-400" />
+                              Giải nghĩa nhanh ({activeStyleInfo.name}):
+                            </span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${activeStyleInfo.badge_color}`}>
+                              {activeStyleInfo.short_desc}
+                            </span>
+                          </div>
+                          {isDifferentFromProject && (
+                            <span className="text-[11px] text-amber-400/90 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse">
+                              ⚠️ Đã đổi phong cách — Bấm "Tái Tạo Prompt" để cập nhật các cảnh
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-slate-300 leading-relaxed text-[11px]">
+                          {activeStyleInfo.description_vi}
+                        </p>
+
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          <span className="text-[10px] text-slate-400 font-medium mr-1">Chi tiết nhận diện:</span>
+                          {activeStyleInfo.key_elements.map((el, idx) => (
+                            <span
+                              key={idx}
+                              className="text-[10px] bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-300"
+                            >
+                              ✓ {el}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
 
                 {/* Batch Config Controls: Delay giữa mỗi ảnh, Timeout */}
@@ -2159,6 +2408,62 @@ export default function StoryStudioPage() {
         preload="auto"
         onEnded={stopSceneAudio}
       />
+
+      {/* ── Modal Xác Nhận Xóa Dự Án ─────────────────────────────── */}
+      {showDeleteModal && currentProject && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => !isDeletingProject && setShowDeleteModal(false)}
+        >
+          <div
+            className="relative max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-100">Xác nhận xóa dự án?</h3>
+                <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                  Hành động này sẽ xóa vĩnh viễn dự án <strong className="text-amber-400">"{currentProject.title}"</strong> cùng toàn bộ ảnh doodle, kịch bản, file âm thanh và video liên quan.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-rose-950/20 border border-rose-900/40 rounded-lg text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>Dữ liệu đã xóa sẽ không thể phục hồi lại.</span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isDeletingProject}
+                onClick={() => setShowDeleteModal(false)}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                Hủy bỏ
+              </Button>
+              <Button
+                size="sm"
+                disabled={isDeletingProject}
+                onClick={handleDeleteProject}
+                className="bg-rose-600 hover:bg-rose-500 text-white text-xs gap-1.5"
+              >
+                {isDeletingProject ? (
+                  <>Đang xóa...</>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" /> Xác Nhận Xóa
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Lightbox Modal for Large Image Preview ─────────────────── */}
       {previewLightboxImg && (

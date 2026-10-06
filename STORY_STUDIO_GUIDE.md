@@ -9,14 +9,15 @@
 **Story Studio** là phân hệ tạo video hoạt hình 2D doodle tự động khép kín trên Dashboard của Flow Kit (`http://localhost:5173/story-studio`).
 
 ### Điểm nổi bật:
-1. **Khóa nhân vật xuyên suốt (Hero Lock & Reference Image):** 1 ảnh nhân vật que duy nhất làm tham chiếu cho toàn bộ video, không bị biến dạng giữa các cảnh.
-2. **Kịch bản chuẩn DNA Văn Minh Bị Bỏ Quên:** LLM viết kịch bản ngôi kể thứ 2, nhịp câu ngắn-ngắn-dài, neo bằng chứng lịch sử (văn bia, nhà khảo cổ, thư tịch cổ), phản chiếu đời sống hiện đại.
-3. **Giọng đọc Minimax Audio (T2A v2):** Tích hợp trực tiếp API Minimax âm thanh ấm, truyền cảm hoặc tải lên file thu âm sẵn.
-4. **Bóc tách timeline chuẩn `[mm:ss]`:** Tự động chia kịch bản thành từng mốc thời gian khớp với tổng thời lượng âm thanh.
-5. **Đồng bộ ảnh Doodle 2D với Google Flow:** Sinh ảnh từng dòng transcript kết hợp ảnh tham chiếu của nhân vật chính.
-6. **Xử lý giới hạn Quota đa tài khoản Google Flow:** Khi 1 tài khoản hết lượt, tự động re-upload ảnh tham chiếu sang tài khoản mới và tạo tiếp các cảnh còn thiếu mà không mất ảnh cũ.
-7. **Render Video hoàn chỉnh bằng FFmpeg:** Ghép ảnh, âm thanh và tự động tạo phụ đề chữ trắng viền đen chuẩn YouTube Explainer.
-8. **Preview 100% các bước:** Mỗi bước đều có giao diện xem trước (ảnh, âm thanh, bảng phân cảnh, video).
+1. **Quản lý dự án linh hoạt:** Cho phép tạo mới, sửa tên trực tiếp trên giao diện (`Enter` để lưu, `Esc` để hủy), và xóa dự án với popup xác nhận an toàn (xóa sạch thư mục dự án và cập nhật danh mục).
+2. **Khóa nhân vật xuyên suốt (Hero Lock & Reference Image):** 1 ảnh nhân vật que duy nhất làm tham chiếu cho toàn bộ video, không bị biến dạng giữa các cảnh.
+3. **Kịch bản chuẩn DNA Văn Minh Bị Bỏ Quên:** LLM viết kịch bản ngôi kể thứ 2, nhịp câu ngắn-ngắn-dài, neo bằng chứng lịch sử (văn bia, nhà khảo cổ, thư tịch cổ), phản chiếu đời sống hiện đại.
+4. **Giọng đọc Minimax Audio (T2A v2):** Tích hợp trực tiếp API Minimax âm thanh ấm, truyền cảm hoặc tải lên file thu âm sẵn.
+5. **Bóc tách timeline chuẩn `[mm:ss]`:** Tự động chia kịch bản thành từng mốc thời gian khớp với tổng thời lượng âm thanh.
+6. **Đồng bộ ảnh Doodle 2D với Google Flow:** Sinh ảnh từng dòng transcript kết hợp ảnh tham chiếu của nhân vật chính.
+7. **Xử lý giới hạn Quota đa tài khoản Google Flow:** Khi 1 tài khoản hết lượt, tự động re-upload ảnh tham chiếu sang tài khoản mới và tạo tiếp các cảnh còn thiếu mà không mất ảnh cũ.
+8. **Render Video hoàn chỉnh bằng FFmpeg:** Ghép ảnh, âm thanh và tự động tạo phụ đề chữ trắng viền đen chuẩn YouTube Explainer.
+9. **Preview 100% các bước:** Mỗi bước đều có giao diện xem trước (ảnh, âm thanh, bảng phân cảnh, video).
 
 ---
 
@@ -77,10 +78,15 @@ tham chiếu    LLM theo      Audio        Transcript    Doodle 2D     FFmpeg + 
   - **Delay giữa các lượt (Cooldown):** Tùy chỉnh số giây nghỉ giữa các lượt batch (ví dụ: `5` giây sau khi lượt trước kết thúc) để tránh bị Google Flow chặn tốc độ (rate limit / unusual activity).
   - **Timeout mỗi ảnh:** Giới hạn thời gian tạo tối đa cho mỗi ảnh (mặc định `60` giây / 1 phút). Nếu quá thời gian này mà ảnh chưa trả về, hệ thống tự ngắt và đánh dấu cảnh đó là thất bại (`failed`), không làm treo các cảnh còn lại hay toàn bộ tiến trình.
   - **Nút Stop All (Dừng Tất Cả):** Nút dừng khẩn cấp màu đỏ (nhấp nháy khi có ảnh đang tạo). Khi bấm, lập tức ngắt kết nối toàn bộ các request tạo ảnh đang chạy dở (`AbortController`), hủy đợt batch tiếp theo và đưa các cảnh đang dở về trạng thái `pending` an toàn mà không cần F5 trình duyệt.
+- **Tùy Chọn Phong Cách Prompt (Prompt Art Style):**
+  - **Nền Văn Minh Bị Bỏ Quên (`forgotten_civilizations` - Mặc định):** Đời thường cổ đại (chèo thuyền độc mộc trên sông Musi, nhà sàn gỗ rustic, chợ buôn bán muối/cá, phế tích đền đài gạch chéo đỏ X để xóa bỏ ảo tưởng cung điện).
+  - **Con Người Cổ Đại & Tiến Hóa (`ancient_humans` - Ancient Humans Master Prompt):** Tiền sử, tiến hóa và sinh tồn nhân loại. Nhân vật que đầu tròn tóc cam nhọn (#F58220) hoặc người tiền sử tóc nâu xù. Đặc trưng: tảng đá dán nhãn chữ trắng ALL-CAPS (SURVIVAL), thảo nguyên savanna cây keo lẻ loi, mây mưa khó khăn, lửa trại bộ lạc, nhà khảo cổ nón cối, dấu X đỏ phủ định.
+  - **Giải nghĩa nhanh tiếng Việt trực quan:** Giao diện có khung giải thích chi tiết ý nghĩa và các chi tiết nhận diện của từng phong cách khi chọn.
+  - **Nút Tái Tạo Prompt Theo Phong Cách Này:** Tự động build lại toàn bộ prompt cho toàn bộ phân cảnh chuẩn 100% theo phong cách đã chọn.
 - **Tạo prompt theo chuẩn Rule 2:**
-  - Chỉ mô tả **hành động & bối cảnh** (ngồi làm việc với laptop, đứng chèo thuyền, đi chợ...).
+  - Chỉ mô tả **hành động & bối cảnh** (ngồi làm việc với laptop, đứng chèo thuyền, đi chợ, săn thú, thảo nguyên savanna...).
   - Tuyệt đối không mô tả màu tóc/quần áo xung đột với ảnh tham chiếu.
-  - Chỉ thị model: `"exactly preserving the character's facial features, hair style, hair color, and clothing from the reference image, do not redesign the character"`.
+  - Chỉ thị model: `"same character design as the reference image, preserving character facial features and hair style, do not redesign the character"`.
 - **Cơ chế xử lý Quota đa tài khoản (Multi-Account Hot-Resume):**
   - Khi tài khoản 1 hết quota (limit), mở Chrome sang tài khoản 2, nhập `Flow Project ID của Acc mới`.
   - Bấm **`🔄 Đồng Bộ Tham Chiếu Sang Acc Mới`**: Hệ thống tự động re-upload file ảnh gốc trên máy sang tài khoản 2 và nhận UUID mới.

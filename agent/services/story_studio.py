@@ -35,6 +35,28 @@ PROJECTS_FILE = STORY_STUDIO_DIR / "projects.json"
 
 DEFAULT_HERO_LOCK = "The main stick figure character from the reference image"
 
+STYLES_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "forgotten_civilizations": {
+        "id": "forgotten_civilizations",
+        "name": "Nền Văn Minh Bị Bỏ Quên (Mặc định)",
+        "short_desc": "Đời thường cổ đại, sông nước, chợ làng, đền đài gạch chéo đỏ",
+        "description_vi": "Phong cách hoạt hình doodle 2D vẽ tay tái hiện đời thường cổ đại (chèo thuyền độc mộc trên sông, chợ búa trao đổi muối/cá, lò gốm, nhà sàn gỗ, đền đài bị gạch chéo đỏ X để xóa bỏ ảo tưởng hoàng gia). Nhân vật khóa chuẩn theo ảnh tham chiếu, tông màu đất, nước, trời tự nhiên.",
+        "default_hero_lock": "The main stick figure character from the reference image",
+    },
+    "ancient_humans": {
+        "id": "ancient_humans",
+        "name": "Con Người Cổ Đại & Tiến Hóa (Ancient Humans)",
+        "short_desc": "Doodle tiền sử, thảo nguyên savanna, tảng đá dán nhãn, lửa trại bộ lạc",
+        "description_vi": "Phong cách doodle 2D chuẩn Ancient Humans về con người tiền sử, tiến hóa và sinh tồn. Nhân vật que đầu tròn tóc cam nhọn đặc trưng (#F58220) hoặc người tiền sử tóc nâu xù. Đặc trưng: tảng đá dán nhãn chữ trắng ALL-CAPS (SURVIVAL), thảo nguyên savanna cây keo lẻ loi, mây mưa khó khăn, lửa trại bộ lạc, nhà khảo cổ nón cối, dấu X đỏ phủ định quan niệm sai.",
+        "default_hero_lock": "The main stick figure character from the reference image with spiky bright orange hair",
+    },
+}
+
+
+def get_available_styles() -> List[Dict[str, Any]]:
+    """Return all supported doodle styles with descriptions."""
+    return list(STYLES_REGISTRY.values())
+
 SYSTEM_PROMPT_CIVILIZATION = """
 You are a viral educational documentary scriptwriter specializing in the ordinary daily life of forgotten and under-covered civilizations (hand-drawn doodle animation channel).
 Format: Educational explainer narrated in calm, intelligent 2nd-person ("you", "your boat", "your field", "your market") — never "we" or "I".
@@ -777,61 +799,203 @@ def parse_or_segment_transcript(
 # ── Stage 5: Scene Prompts & Image Generation ─────────────────────────
 
 
+def _extract_milestone_label(txt: str) -> str:
+    """Extract a clean uppercase English label for milestone concept frames."""
+    m_years = re.search(r"\b(\d{1,3}(?:,\d{3})+|\d{3,6})\s*(years?)\b", txt, re.IGNORECASE)
+    if m_years:
+        return f"{m_years.group(1)} {m_years.group(2).upper()}"
+    m_num = re.search(r"\b(\d{3,4})\b", txt)
+    if m_num:
+        return f"AROUND {m_num.group(1)}"
+    m_cen = re.search(r"(\d+)(?:st|nd|rd|th)?\s*century", txt.lower())
+    if m_cen:
+        return f"{m_cen.group(1)}TH CENTURY"
+    return "CHRONICLE"
+
+
 def build_scene_prompts(
     scenes: List[Dict[str, Any]],
     hero_lock: str = "",
     topic: str = "",
+    style: str = "forgotten_civilizations",
 ) -> List[Dict[str, Any]]:
-    """Build high-consistency 2D doodle prompts per flow_nen_van_minh_bi_bo_quen.txt."""
+    """Build high-consistency 2D doodle prompts with strict text control (100% English prompts)."""
+    style_key = style.lower().strip() if style else "forgotten_civilizations"
+    if style_key not in STYLES_REGISTRY:
+        style_key = "forgotten_civilizations"
+
     prefix = (
         "Hand-drawn 2D doodle cartoon animation, flat solid colors, "
         "bold black hand-drawn outlines, slightly wobbly imperfect marker lines, "
     )
-    suffix = (
-        ", same character design as the reference image, exactly preserving the character's facial features, hair style, hair color, and clothing from the reference image, "
-        "do not redesign the character, do not change hair color or clothes, "
-        "no blank background, "
-        "no gradients, no drop shadows, no photographic textures, no photorealism, "
-        "no 3D render, no realistic faces, no realistic skin, no anime, 16:9 widescreen, "
-        "simple educational YouTube explainer doodle style."
-    )
 
-    # Clean hero anchor so it doesn't force conflicting hair/clothing
     hero_clean = (hero_lock or "").strip()
-    if not hero_clean or ("dark brown hair" in hero_clean.lower() and "indigo tunic" in hero_clean.lower()):
-        hero_anchor = "The main stick figure character from the reference image"
-    else:
-        hero_anchor = hero_clean
 
-    enriched = []
-    for item in scenes:
-        txt = item["text"]
-        
-        # Translate transcript statement to a scene action without overriding appearance
-        if any(w in txt.lower() for w in ["laptop", "desk", "inbox", "screen", "computer"]):
-            action = f"{hero_anchor}, sitting at a minimalist modern wooden desk looking at a laptop with tired posture, cream background"
-        elif any(w in txt.lower() for w in ["wake", "morning", "mud", "smoke"]):
-            action = f"{hero_anchor}, waking up on a wooden floor inside a rustic stilt hut, rubbing eyes, river mist through window"
-        elif any(w in txt.lower() for w in ["boat", "river", "paddle", "water", "current", "tide"]):
-            action = f"{hero_anchor}, standing in a narrow wooden dugout boat holding a paddle, calm blue water and simple green trees"
-        elif any(w in txt.lower() for w in ["market", "trade", "fish", "salt", "coin"]):
-            action = f"{hero_anchor}, in a bustling open-air village market holding a clay jar, bundles of salt and dried fish on wooden mats"
-        elif any(w in txt.lower() for w in ["temple", "ruin", "gold", "king", "treasure"]):
-            action = f"{hero_anchor} standing in foreground, small stone temple ruin in background marked with a bold red hand-drawn X"
-        elif any(w in txt.lower() for w in ["dusk", "night", "stars", "moon", "sleep", "dark"]):
-            action = f"{hero_anchor}, resting by a small glowing campfire beside the river, dark navy night sky with a simple yellow crescent moon"
+    if style_key == "ancient_humans":
+        # Suffix with NO text allowed for normal scenes
+        suffix_no_text = (
+            ", same character design as the reference image, preserving facial features, spiky orange hair and stick figure body, "
+            "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, "
+            "no 3D render, no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
+        )
+        suffix_emphasis_text = (
+            ", same character design as the reference image, preserving facial features, spiky orange hair and stick figure body, "
+            "do not redesign the character, single bold keyword on object only, no subtitles, no paragraph text, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, "
+            "no 3D render, no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
+        )
+        if not hero_clean or ("dark brown hair" in hero_clean.lower() and "indigo tunic" in hero_clean.lower()):
+            hero_anchor = "The main stick figure character from the reference image with spiky bright orange hair"
         else:
-            action = f"{hero_anchor}, acting out scene: '{txt}', simple hand-drawn environment, bold flat color zones"
+            hero_anchor = hero_clean
 
-        full_prompt = f"{prefix}{action}{suffix}"
-        enriched.append({
-            **item,
-            "prompt": full_prompt,
-            "status": item.get("status", "pending"),
-            "image_url": item.get("image_url", ""),
-        })
+        enriched = []
+        for item in scenes:
+            txt = item["text"]
+            txt_lower = txt.lower()
 
-    return enriched
+            is_survival_emphasis = any(w in txt_lower for w in ["survival", "predator", "deadly beast", "ice age", "starvation"]) and not any(w in txt_lower for w in ["savanna", "landscape"])
+            is_stat_or_milestone = (
+                any(w in txt_lower for w in ["300,000", "thousand years", "million years", "years ago"])
+                and any(c.isdigit() for c in txt)
+                and not any(w in txt_lower for w in ["savanna", "landscape", "tree", "river", "walk", "fire", "camp"])
+            )
+
+            current_suffix = suffix_no_text
+
+            if any(w in txt_lower for w in ["laptop", "desk", "inbox", "screen", "computer", "phone", "office", "alarm", "commute", "clock", "modern"]):
+                action = f"{hero_anchor}, sitting at a minimalist modern white desk looking exhausted at a glowing laptop screen, a ringing red alarm clock on the side, plain white background with a gray ground strip"
+            elif is_stat_or_milestone:
+                label = _extract_milestone_label(txt)
+                action = f"Plain cream background with a gray ground strip, {hero_anchor} standing beside a massive floating bold RED hand-lettered text '{label}', minimal educational text frame"
+                current_suffix = suffix_emphasis_text
+            elif is_survival_emphasis:
+                action = f"{hero_anchor} with a determined gritted-teeth expression holding a primitive wooden spear, huge gray boulder in background with bold white ALL-CAPS label 'SURVIVAL', light blue sky, tan dirt ground"
+                current_suffix = suffix_emphasis_text
+            elif any(w in txt_lower for w in ["savanna", "prehistoric", "dawn", "sunrise", "dusk", "ancestor", "origin"]):
+                action = f"{hero_anchor}, standing on a vast prehistoric savanna landscape, warm orange sky, tan dirt ground with small grass tufts and a lone flat acacia tree in distance"
+            elif any(w in txt_lower for w in ["hunt", "hunter", "spear", "mammoth", "animal", "prey", "danger", "struggle"]):
+                action = f"{hero_anchor} with a determined expression creeping forward holding a wooden spear, light blue sky, tan dirt ground with rugged boulders"
+            elif any(w in txt_lower for w in ["fire", "campfire", "tribe", "clan", "band", "community", "social", "gather", "family", "together"]):
+                action = f"A small friendly tribe of stick figures including {hero_anchor} sitting in a circle around a crackling orange campfire, light blue daytime sky, tan ground with simple green bushes"
+            elif any(w in txt_lower for w in ["cold", "freeze", "winter", "ice", "snow", "rain", "storm", "starve", "hunger", "pain", "sad", "suffer", "hardship", "loss"]):
+                action = f"{hero_anchor} sitting on the ground curled up hugging knees with a worried frown, under a flat dark gray rain cloud pouring blue raindrops, plain cream background"
+            elif any(w in txt_lower for w in ["archaeologist", "excavation", "fossil", "skull", "bone", "cave", "discover", "study", "research", "evidence", "site", "scientist"]):
+                action = f"An explorer stick figure wearing a brown pith helmet and backpack holding a glowing yellow lantern, standing beside {hero_anchor} at a dark brown cave entrance in rocky ground, light blue sky"
+            elif any(w in txt_lower for w in ["myth", "trap", "wrong", "mistake", "lie", "illusion", "false", "never", "not true"]):
+                action = f"{hero_anchor} standing with a shrug in the foreground, while a large concept illustration behind is crossed out with a big bold RED hand-drawn X across the frame"
+            elif any(w in txt_lower for w in ["night", "sleep", "dream", "moon", "stars", "bed", "rest", "dark"]):
+                action = f"{hero_anchor} sleeping peacefully on a simple tan ground mat, deep indigo night sky dotted with simple white star dots and a glowing yellow crescent moon"
+            elif any(w in txt_lower for w in ["wake", "morning", "sunlight", "body"]):
+                action = f"{hero_anchor} stretching arms happily under morning sunlight, simple outdoor ancestral camp, light blue sky and tan ground"
+            else:
+                action = f"{hero_anchor}, moving across an ancient outdoor prehistoric terrain, chunky flat cartoon shapes, outdoor nature with light blue sky and tan ground, bold flat color zones"
+
+            full_prompt = f"{prefix}{action}{current_suffix}"
+            enriched.append({
+                **item,
+                "prompt": full_prompt,
+                "status": item.get("status", "pending"),
+                "image_url": item.get("image_url", ""),
+            })
+        return enriched
+
+    else:
+        # Default: forgotten_civilizations per flow_nen_van_minh_bi_bo_quen.txt
+        # Normal scenes STRICTLY prohibit text to prevent AI from painting subtitles on drawings
+        suffix_no_text = (
+            ", same character design as the reference image, exactly preserving the character's facial features, hair style, hair color, and clothing from the reference image, "
+            "do not redesign the character, do not change hair color or clothes, "
+            "no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
+            "no blank background, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, "
+            "no 3D render, no realistic faces, no realistic skin, no anime, 16:9 widescreen, "
+            "simple educational YouTube explainer doodle style."
+        )
+        # Dedicated concept card suffix for explicit emphasis / definition
+        suffix_concept_text = (
+            ", centered single bold red hand-lettered keyword text only, no subtitles, no paragraphs, no extra words, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, "
+            "no 3D render, no realistic faces, no anime, 16:9 widescreen, "
+            "simple educational YouTube explainer doodle style."
+        )
+
+        if not hero_clean or ("dark brown hair" in hero_clean.lower() and "indigo tunic" in hero_clean.lower()):
+            hero_anchor = "The main stick figure character from the reference image"
+        else:
+            hero_anchor = hero_clean
+
+        enriched = []
+        for item in scenes:
+            txt = item["text"]
+            txt_lower = txt.lower()
+
+            # 1. Milestone year / century emphasis (ONLY when explicitly stating a year or century)
+            is_year_milestone = (
+                any(w in txt_lower for w in ["year is", "year was", "around ", "in the year", "century"])
+                and any(c.isdigit() for c in txt)
+                and len(txt.split()) <= 15
+            )
+
+            # 2. Historical definition / inscription explanation
+            is_definition_concept = (
+                any(w in txt_lower for w in ["inscription", "chronicle", "kedukan bukit", "mandala", "corvee", "corvée", "definition", "meaning"])
+                and any(w in txt_lower for w in ["record", "stone", "tells", "word", "term", "system", "means"])
+            )
+
+            current_suffix = suffix_no_text
+
+            if is_year_milestone:
+                label = _extract_milestone_label(txt)
+                action = f"Concept milestone frame, plain cream background, centered large bold RED hand-lettered text '{label}', minimal educational explainer text card"
+                current_suffix = suffix_concept_text
+
+            elif is_definition_concept:
+                action = f"{hero_anchor} standing in foreground pointing at a clean concept card on plain cream background with a single bold RED hand-lettered term, educational explainer frame"
+                current_suffix = suffix_concept_text
+
+            elif any(w in txt_lower for w in ["laptop", "desk", "inbox", "screen", "computer", "office"]):
+                action = f"{hero_anchor}, sitting at a minimalist modern wooden desk looking at a laptop with tired posture, plain cream background"
+
+            elif any(w in txt_lower for w in ["wake", "morning", "mud", "smoke", "hut", "stilt", "dawn"]):
+                action = f"{hero_anchor}, waking up on a rustic wooden floor inside a rustic stilt hut, rubbing eyes, gentle river mist through open window"
+
+            elif any(w in txt_lower for w in ["boat", "river", "paddle", "water", "current", "tide", "stream", "dugout", "row", "canal"]):
+                action = f"{hero_anchor}, standing in a narrow wooden dugout boat holding a single paddle, calm blue river water, simple green trees on bank"
+
+            elif any(w in txt_lower for w in ["market", "trade", "fish", "salt", "coin", "pottery", "jar", "goods", "merchant", "sell", "buy", "weigh", "scale"]):
+                action = f"{hero_anchor}, in a bustling open-air village market holding a clay jar, bundles of salt and dried fish on wooden mats"
+
+            elif any(w in txt_lower for w in ["temple", "ruin", "gold", "king", "treasure", "palace", "monument", "statue", "crown", "empire"]):
+                action = f"{hero_anchor} standing in foreground, small ancient stone temple ruin in background marked with a bold red hand-drawn X across the temple"
+
+            elif any(w in txt_lower for w in ["rice", "field", "farm", "crop", "harvest", "plant", "kiln", "labor", "plow"]):
+                action = f"{hero_anchor}, working in a lush green countryside rice field, holding a small bundle of rice stalks under daylight sky"
+
+            elif any(w in txt_lower for w in ["eat", "meal", "cook", "food", "kitchen", "bowl", "hearth", "taste"]):
+                action = f"{hero_anchor}, sitting cross-legged on a wooden floor eating simple food from a clay bowl, warm indoor hut atmosphere"
+
+            elif any(w in txt_lower for w in ["walk", "carry", "basket", "road", "path", "trail", "foot", "travel", "village"]):
+                action = f"{hero_anchor}, walking along a dusty dirt village path carrying a rustic woven basket on back, lush tropical nature"
+
+            elif any(w in txt_lower for w in ["dusk", "night", "stars", "moon", "sleep", "dark", "fire", "campfire", "evening"]):
+                action = f"{hero_anchor}, resting quietly by a small glowing campfire beside the river, dark navy night sky with a simple yellow crescent moon"
+
+            elif any(w in txt_lower for w in ["look", "watch", "gaze", "think", "wonder", "listen", "eye", "see"]):
+                action = f"{hero_anchor}, standing peacefully on the riverbank gazing out across the calm water, serene posture"
+
+            else:
+                action = f"{hero_anchor}, engaged in daily life activity in a historic village setting, simple hand-drawn environment, bold flat color zones"
+
+            full_prompt = f"{prefix}{action}{current_suffix}"
+            enriched.append({
+                **item,
+                "prompt": full_prompt,
+                "status": item.get("status", "pending"),
+                "image_url": item.get("image_url", ""),
+            })
+        return enriched
 
 
 async def generate_single_scene_image(

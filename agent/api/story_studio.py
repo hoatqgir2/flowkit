@@ -14,6 +14,14 @@ class CreateStoryProjectRequest(BaseModel):
     title: str = "New Forgotten Civilization Story"
     keyword: str = ""
     hero_lock: Optional[str] = None
+    prompt_style: Optional[str] = "forgotten_civilizations"
+
+
+class UpdateStoryProjectRequest(BaseModel):
+    title: Optional[str] = None
+    keyword: Optional[str] = None
+    hero_lock: Optional[str] = None
+    prompt_style: Optional[str] = None
 
 
 class GenerateScriptRequest(BaseModel):
@@ -53,6 +61,7 @@ class UpdateTranscriptRequest(BaseModel):
 
 class BuildPromptsRequest(BaseModel):
     hero_lock: Optional[str] = None
+    style: Optional[str] = "forgotten_civilizations"
 
 
 class GenerateSceneImageRequest(BaseModel):
@@ -68,6 +77,12 @@ class RenderVideoRequest(BaseModel):
 
 
 # ── Project CRUD ─────────────────────────────────────────────────────
+
+
+@router.get("/styles")
+async def get_styles():
+    """Get list of available doodle prompt styles with explanations."""
+    return {"styles": ss.get_available_styles()}
 
 
 @router.get("/projects")
@@ -86,6 +101,7 @@ async def create_project(req: CreateStoryProjectRequest):
         "keyword": req.keyword,
         "current_stage": 1,
         "hero_lock": req.hero_lock or ss.DEFAULT_HERO_LOCK,
+        "prompt_style": req.prompt_style or "forgotten_civilizations",
         "scenes": [],
     }
     return ss.save_project(proj)
@@ -100,11 +116,32 @@ async def get_project(project_id: str):
     return proj
 
 
+@router.patch("/projects/{project_id}")
+@router.put("/projects/{project_id}")
+async def update_project(project_id: str, req: UpdateStoryProjectRequest):
+    """Update project metadata like title, keyword, prompt_style."""
+    proj = ss.get_project(project_id)
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    if req.title is not None and req.title.strip():
+        proj["title"] = req.title.strip()
+    if req.keyword is not None:
+        proj["keyword"] = req.keyword.strip()
+    if req.prompt_style is not None and req.prompt_style.strip():
+        proj["prompt_style"] = req.prompt_style.strip()
+    if req.hero_lock is not None:
+        proj["hero_lock"] = req.hero_lock
+    return ss.save_project(proj)
+
+
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: str):
     """Delete a Story Studio project."""
+    proj = ss.get_project(project_id)
+    if not proj:
+        raise HTTPException(404, "Project not found")
     ok = ss.delete_project(project_id)
-    return {"ok": ok}
+    return {"ok": ok, "id": project_id}
 
 
 # ── Stage 1: Character Reference ──────────────────────────────────────
@@ -290,11 +327,13 @@ async def transcribe_endpoint(project_id: str, req: TranscribeRequest):
             audio_duration=proj.get("audio_duration", 0.0),
         )
 
-    # Automatically build 2D doodle prompts with Hero Lock
+    # Automatically build 2D doodle prompts with Hero Lock & selected style
     hero_lock = proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
-    scenes = ss.build_scene_prompts(scenes, hero_lock, proj.get("keyword", ""))
+    prompt_style = proj.get("prompt_style") or "forgotten_civilizations"
+    scenes = ss.build_scene_prompts(scenes, hero_lock, proj.get("keyword", ""), style=prompt_style)
 
     proj["scenes"] = scenes
+    proj["prompt_style"] = prompt_style
     proj["current_stage"] = max(proj.get("current_stage", 1), 4)
     ss.save_project(proj)
     return {"scenes": scenes, "count": len(scenes)}
@@ -315,18 +354,20 @@ async def update_transcript_endpoint(project_id: str, req: UpdateTranscriptReque
 
 @router.post("/projects/{project_id}/build-prompts")
 async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
-    """Rebuild doodle prompts for all scenes."""
+    """Rebuild doodle prompts for all scenes with selected style."""
     proj = ss.get_project(project_id)
     if not proj:
         raise HTTPException(404, "Project not found")
 
+    prompt_style = req.style or proj.get("prompt_style") or "forgotten_civilizations"
     hero_lock = req.hero_lock or proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
-    scenes = ss.build_scene_prompts(proj.get("scenes", []), hero_lock, proj.get("keyword", ""))
+    scenes = ss.build_scene_prompts(proj.get("scenes", []), hero_lock, proj.get("keyword", ""), style=prompt_style)
     proj["scenes"] = scenes
     proj["hero_lock"] = hero_lock
+    proj["prompt_style"] = prompt_style
     proj["current_stage"] = max(proj.get("current_stage", 1), 5)
     ss.save_project(proj)
-    return {"scenes": scenes}
+    return {"scenes": scenes, "prompt_style": prompt_style}
 
 
 @router.post("/projects/{project_id}/generate-scene-image")
