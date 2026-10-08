@@ -9,7 +9,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction, 
 import { Badge } from '../components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Button } from '../components/ui/button'
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import CreateProjectDialog from '../components/projects/CreateProjectDialog'
 
 type FilterTab = 'ACTIVE' | 'ARCHIVED' | 'ALL'
@@ -24,16 +24,26 @@ function TierBadge({ tier, t }: { tier: string | null; t: (key: TranslationKey) 
   return <Badge variant={isTwo ? 'default' : 'secondary'}>{isTwo ? t('projects.tier2') : t('projects.tier1')}</Badge>
 }
 
-function ProjectCard({ project, onClick, t }: { project: Project; onClick: () => void; t: (key: TranslationKey, params?: Record<string, string | number>) => string }) {
+function ProjectCard({ project, onClick, onDelete, t }: { project: Project; onClick: () => void; onDelete: (e: React.MouseEvent) => void; t: (key: TranslationKey, params?: Record<string, string | number>) => string }) {
   return (
-    <Card className="py-4 gap-3 h-full cursor-pointer transition-opacity hover:opacity-90" onClick={onClick}>
+    <Card className="py-4 gap-3 h-full cursor-pointer transition-opacity hover:opacity-90 relative group" onClick={onClick}>
       <CardHeader>
         <CardTitle className="text-sm">{project.name}</CardTitle>
         {project.description && (
           <CardDescription className="text-[11px] leading-relaxed line-clamp-2">{project.description}</CardDescription>
         )}
         <CardAction>
-          <TierBadge tier={project.user_paygate_tier} t={t} />
+          <div className="flex items-center gap-1.5">
+            <TierBadge tier={project.user_paygate_tier} t={t} />
+            <button
+              type="button"
+              onClick={onDelete}
+              title="Xóa dự án"
+              className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 transition-opacity cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </CardAction>
       </CardHeader>
       <CardContent>
@@ -75,6 +85,17 @@ export default function ProjectsPage() {
     return p.status === tab
   })
 
+  async function handleDelete(e: React.MouseEvent, p: Project) {
+    e.stopPropagation()
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa dự án "${p.name}"?`)) return
+    try {
+      await fetchAPI(`/api/projects/${p.id}`, { method: 'DELETE' })
+      setProjects(prev => prev.filter(item => item.id !== p.id))
+    } catch (err: any) {
+      alert(err.message || 'Lỗi khi xóa dự án')
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
@@ -114,7 +135,13 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
           {filtered.map(p => (
-            <ProjectCard key={p.id} project={p} onClick={() => navigate(`/projects/${p.id}`)} t={t} />
+            <ProjectCard
+              key={p.id}
+              project={p}
+              onClick={() => navigate(`/projects/${p.id}`)}
+              onDelete={(e) => handleDelete(e, p)}
+              t={t}
+            />
           ))}
         </div>
       )}

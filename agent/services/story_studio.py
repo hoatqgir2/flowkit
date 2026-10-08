@@ -51,6 +51,11 @@ STYLES_REGISTRY: Dict[str, Dict[str, Any]] = {
         "short_desc": "Đời thường cổ đại, sông nước, chợ làng, đền đài gạch chéo đỏ",
         "description_vi": "Phong cách hoạt hình doodle 2D vẽ tay tái hiện đời thường cổ đại (chèo thuyền độc mộc trên sông, chợ búa trao đổi muối/cá, lò gốm, nhà sàn gỗ, đền đài bị gạch chéo đỏ X để xóa bỏ ảo tưởng hoàng gia). Nhân vật khóa chuẩn theo ảnh tham chiếu, tông màu đất, nước, trời tự nhiên.",
         "default_hero_lock": "The main stick figure character from the reference image",
+        "default_topic_requirements": (
+            "- Setting & Environment: Rustic stilt wooden huts, gentle river mist at dawn, narrow wooden dugout boats with paddles on calm river water.\n"
+            "- Daily life: Bustling open-air village markets with clay pottery jars, bundles of salt and dried fish on wooden mats, lush green countryside rice fields.\n"
+            "- Signature devices: Ancient stone temple ruins crossed out with a bold RED hand-drawn X to debunk myths of royal palaces; evening campfire beside river under crescent moon."
+        ),
     },
     "ancient_humans": {
         "id": "ancient_humans",
@@ -58,6 +63,18 @@ STYLES_REGISTRY: Dict[str, Dict[str, Any]] = {
         "short_desc": "Doodle tiền sử, thảo nguyên savanna, tảng đá dán nhãn, lửa trại bộ lạc",
         "description_vi": "Phong cách doodle 2D chuẩn Ancient Humans về con người tiền sử, tiến hóa và sinh tồn. Nhân vật que đầu tròn tóc cam nhọn đặc trưng (#F58220) hoặc người tiền sử tóc nâu xù. Đặc trưng: tảng đá dán nhãn chữ trắng ALL-CAPS (SURVIVAL), thảo nguyên savanna cây keo lẻ loi, mây mưa khó khăn, lửa trại bộ lạc, nhà khảo cổ nón cối, dấu X đỏ phủ định quan niệm sai.",
         "default_hero_lock": "The main stick figure character from the reference image with spiky bright orange hair",
+        "default_topic_requirements": (
+            "- Setting & Environment: Prehistoric savanna landscape with warm orange/tan sky, tan dirt ground with small grass tufts and lone flat acacia tree in distance; outdoor daytime light blue sky and tan ground.\n"
+            "- Character rules: The main 'you' figure has spiky bright orange hair (#F58220); early ancestral humans have shaggy messy brown hair; modern figures have a bald round white head.\n"
+            "- Signature devices (Ancient Humans Framework):\n"
+            "  * Primitive wooden spear held with determined gritted-teeth expression when hunting or facing predators.\n"
+            "  * Huge dark gray boulder with bold white ALL-CAPS hand-lettered label 'SURVIVAL' for abstract survival concepts.\n"
+            "  * Friendly small tribe of stick figures sitting in a circle around crackling orange campfire.\n"
+            "  * Explorer/archaeologist stick figure wearing brown pith helmet, backpack, holding glowing yellow lantern beside dark brown cave entrance.\n"
+            "  * Hardship / pain: sad stick figure curled up hugging knees under flat dark gray rain cloud pouring blue raindrops.\n"
+            "  * Negation / myth: confident figure or concept illustration crossed out with a big bold RED hand-drawn X across the frame ('wrong / not this').\n"
+            "  * Milestone text frame: plain cream background with bold red ALL-CAPS text (e.g. '300,000 YEARS')."
+        ),
     },
     "brain_psychology": {
         "id": "brain_psychology",
@@ -65,6 +82,16 @@ STYLES_REGISTRY: Dict[str, Dict[str, Any]] = {
         "short_desc": "Doodle tâm lý học, não bộ hồng 2D ngộ nghĩnh, lời khuyên bị phớt lờ, thiên kiến nhận thức",
         "description_vi": "Phong cách hoạt hình doodle 2D chuyên đề Tâm lý học & Khoa học Hành vi (Psychology & Behavioral Neuroscience). Nhân vật que tối giản tương tác cùng bộ não hoạt hình 2D màu hồng pastel/san hô với biểu cảm ngộ nghĩnh (bối rối, lười biếng, hoảng sợ), người que bịt tai phớt lờ loa phóng thanh lời khuyên, đám mây suy nghĩ rối như tơ vò, bẫy dopamine lướt điện thoại, ngã rẽ thói quen và các thí nghiệm tâm lý với dấu X đỏ phủ định.",
         "default_hero_lock": "The main minimalist stick figure character from the reference image with a round white head",
+        "default_topic_requirements": (
+            "- Setting & Characters: Minimalist stick figures with round white head; modern relatable settings (minimalist desk with laptop, dark bedroom, fork in the road).\n"
+            "- Signature devices:\n"
+            "  * Person covering both ears turning away from a loud red megaphone shouting advice.\n"
+            "  * Dark bedroom at night: lying in bed under blankets with glowing blue smartphone screen and thumb scrolling.\n"
+            "  * Ego defense: hastily building a defensive cartoon brick wall in front of self and peeking over top.\n"
+            "  * Tangled dark scribble yarn cloud floating over head for overthinking or anxiety.\n"
+            "  * Cute small 2D flat pink cartoon brain character for specific neuroscience gags.\n"
+            "  * Big bold RED hand-drawn X across false myths and cognitive biases."
+        ),
     },
 }
 
@@ -145,7 +172,18 @@ def load_projects_index() -> List[Dict[str, Any]]:
         return []
     try:
         with open(PROJECTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            raw_projects = json.load(f)
+        valid_projects = []
+        needs_prune = False
+        for p in raw_projects:
+            pid = p.get("id")
+            if pid and (STORY_STUDIO_DIR / pid / "project.json").exists():
+                valid_projects.append(p)
+            else:
+                needs_prune = True
+        if needs_prune:
+            save_projects_index(valid_projects)
+        return valid_projects
     except Exception as e:
         logger.error("Failed to load story studio projects: %s", e)
         return []
@@ -867,6 +905,8 @@ def build_scene_prompts(
     hero_lock: str = "",
     topic: str = "",
     style: str = "forgotten_civilizations",
+    background_mode: str = "dynamic",
+    topic_requirements: str = "",
 ) -> List[Dict[str, Any]]:
     """Build high-consistency 2D doodle prompts with strict text control (100% English prompts)."""
     style_key = style.lower().strip() if style else "forgotten_civilizations"
@@ -1255,6 +1295,75 @@ async def _call_llm_completion(
     return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
 
+def _parse_llm_json_actions(content: str) -> Dict[int, str]:
+    """Extract {id: action} mapping from LLM output across formats (JSON array, object, code fences)."""
+    actions: Dict[int, str] = {}
+    if not content:
+        return actions
+
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+    # 1. Direct JSON parse
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            for it in data:
+                if isinstance(it, dict) and "id" in it and "action" in it:
+                    actions[int(it["id"])] = str(it["action"]).strip()
+            if actions:
+                return actions
+        elif isinstance(data, dict):
+            items = data.get("scenes") or data.get("actions") or []
+            if isinstance(items, list):
+                for it in items:
+                    if isinstance(it, dict) and "id" in it and "action" in it:
+                        actions[int(it["id"])] = str(it["action"]).strip()
+                if actions:
+                    return actions
+            elif "id" in data and "action" in data:
+                actions[int(data["id"])] = str(data["action"]).strip()
+                return actions
+    except Exception:
+        pass
+
+    # 2. Regex search for JSON array [ ... ]
+    m_arr = re.search(r"\[\s*\{.*?\}\s*\]", text, re.DOTALL)
+    if not m_arr:
+        m_arr = re.search(r"\[.*\]", text, re.DOTALL)
+    if m_arr:
+        try:
+            parsed = json.loads(m_arr.group(0))
+            if isinstance(parsed, list):
+                for it in parsed:
+                    if isinstance(it, dict) and "id" in it and "action" in it:
+                        actions[int(it["id"])] = str(it["action"]).strip()
+                if actions:
+                    return actions
+        except Exception:
+            pass
+
+    # 3. Regex search for JSON object { ... }
+    m_obj = re.search(r"\{.*\}", text, re.DOTALL)
+    if m_obj:
+        try:
+            parsed = json.loads(m_obj.group(0))
+            if isinstance(parsed, dict):
+                items = parsed.get("scenes") or parsed.get("actions") or []
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, dict) and "id" in it and "action" in it:
+                            actions[int(it["id"])] = str(it["action"]).strip()
+                elif "id" in parsed and "action" in parsed:
+                    actions[int(parsed["id"])] = str(parsed["action"]).strip()
+        except Exception:
+            pass
+
+    return actions
+
+
 async def generate_scene_prompts_ai(
     scenes: List[Dict[str, Any]],
     hero_lock: str = "",
@@ -1264,13 +1373,16 @@ async def generate_scene_prompts_ai(
     api_key: str = "",
     model: str = "",
     batch_size: int = 25,
+    background_mode: str = "dynamic",
+    topic_requirements: str = "",
+    full_script: str = "",
+    target_scene_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Universal AI-driven 2D doodle storyboard generator (OpenAI-compatible / Gemini 3.8 Flash).
     
-    Feeds the FULL narration transcript and topic directly to the AI visual director in a SINGLE request.
-    Uses streaming (stream=True) to stream SSE tokens continuously, preventing Cloudflare HTTP 524 timeouts.
-    Ensures 1-shot holistic narrative comprehension, exact chronological ordering of all scene IDs,
-    and updates all timeline scenes simultaneously.
+    Feeds the FULL original script and complete scene timeline to the AI visual director.
+    The AI reads and comprehends the whole story arc first, ensuring every scene's prompt
+    follows the narrative flow and thematic setting with high visual continuity.
     """
     if not scenes:
         return []
@@ -1283,13 +1395,50 @@ async def generate_scene_prompts_ai(
     hero_clean = (hero_lock or "").strip()
     hero_anchor = hero_clean or "The main stick figure character from the reference image"
 
-    suffix = (
-        ", plain cream background with a gray ground strip, "
-        "same character design as the reference image, preserving facial features and minimalist stick figure body, "
-        "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
-        "no gradients, no drop shadows, no photographic textures, no photorealism, no 3D render, "
-        "no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
-    )
+    is_fixed_bg = (background_mode or "").strip().lower() == "fixed"
+
+    if is_fixed_bg:
+        suffix = (
+            ", plain cream background with a gray ground strip, "
+            "same character design as the reference image, preserving facial features and minimalist stick figure body, "
+            "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, no 3D render, "
+            "no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
+        )
+        bg_instruction = (
+            "1. BACKGROUND & ENVIRONMENT (FIXED MINIMALIST STUDIO):\n"
+            "   All scenes MUST take place against a minimalist plain cream background with a gray ground strip.\n"
+            "   Do NOT describe varied outdoor environments, rooms, walls, or scenic landscapes.\n"
+            "   Focus purely on character expressions, poses, props, and symbolic interactions in front of this clean minimalist studio backdrop."
+        )
+    else:
+        suffix = (
+            ", same character design as the reference image, preserving facial features and minimalist stick figure body, "
+            "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
+            "no gradients, no drop shadows, no photographic textures, no photorealism, no 3D render, "
+            "no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
+        )
+        bg_instruction = (
+            "1. BACKGROUND & ENVIRONMENT (DYNAMIC CONTEXTUAL SETTING):\n"
+            "   Deeply understand the story context and genre from the full script and narration sentences.\n"
+            "   For EACH scene, describe a distinct, context-specific 2D doodle background setting and environment matching the story era "
+            "   (e.g., sunny prehistoric savanna with acacia trees, cozy dark bedroom at night with glowing smartphone, bustling ancient riverside market, "
+            "   minimalist modern office desk with laptop, outdoor crossroad with directional signs, campfire under starry sky).\n"
+            "   Vary environments naturally to match the story's visual journey while keeping flat solid colors and 2D doodle cartoon style."
+        )
+
+    # Process topic requirements (custom or style defaults)
+    reqs_clean = (topic_requirements or "").strip()
+    style_key = style.lower().strip() if style else "doodle"
+    if not reqs_clean and style_key in STYLES_REGISTRY:
+        reqs_clean = STYLES_REGISTRY[style_key].get("default_topic_requirements", "").strip()
+
+    topic_rules_instruction = ""
+    if reqs_clean:
+        topic_rules_instruction = (
+            f"MANDATORY THEME & TOPIC RULES (YOU MUST STRICTLY INCORPORATE THESE SPECIFIC THEME ELEMENTS WHERE APPLICABLE):\n"
+            f"{reqs_clean}\n"
+        )
 
     burl = (base_url or STORY_AI_BASE_URL).rstrip("/")
     key = api_key or STORY_AI_API_KEY
@@ -1297,39 +1446,109 @@ async def generate_scene_prompts_ai(
 
     if not key or not burl:
         logger.warning("No AI API key or base_url configured, falling back to rule-based prompt builder.")
-        return build_scene_prompts(scenes, hero_lock, topic, style=style)
+        return build_scene_prompts(scenes, hero_lock, topic, style=style, background_mode=background_mode, topic_requirements=topic_requirements)
 
-    system_prompt = f"""You are an elite visual director and storyboard artist for educational 2D doodle animations (Kurzgesagt / MinutePhysics / AsapSCIENCE style).
-Story Topic: {topic or 'Educational explainer narrative'}
-Protagonist Anchor: {hero_anchor}
+    # Prepare complete narrative script
+    script_content = (full_script or "").strip()
+    if not script_content:
+        # Reconstruct narrative from scene texts with timestamps
+        lines = []
+        for i, s in enumerate(scenes):
+            txt = s.get("text", "").strip()
+            if txt:
+                sid = s.get("id", i + 1)
+                t_str = s.get("timestamp_str") or f"Scene {sid}"
+                lines.append(f"[{t_str}] {txt}")
+        script_content = "\n".join(lines)
 
-The user provides the entire narration transcript with scene IDs.
-Your job is to read the FULL transcript from start to finish, understand the story arc, and output the visual action description for EVERY single scene in exact chronological order.
+    system_prompt = f"""You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations (Kurzgesagt / MinutePhysics / AsapSCIENCE style).
 
-CRITICAL RULES:
-1. Deeply understand the story context and genre from the topic and sentences (whether psychology, ancient history, prehistoric evolution, business, or everyday life). Adapt the environments, props, and actions naturally to match the narrative.
-2. Output MUST include EVERY scene ID from 1 to the end, in exact numerical order without skipping any scene.
-3. Every scene action must be a CONCRETE, VISUAL, PHYSICAL 2D DOODLE SCENE (12-25 words) illustrating that exact sentence.
-4. Start each action directly with the subject, e.g. "{hero_anchor} ...".
-5. STRICTLY NO TEXT IN THE DRAWING: no words, no letters, no numbers, no subtitles, no speech bubbles, no labels. The storytelling must be 100% visual through characters, props, and actions.
-6. Ensure narrative continuity and visual variety: vary compositions (medium shots, close-ups of hands/objects, two-person interactions, metaphorical objects like scales, clocks, doors, paths, ropes, walls).
-7. Return ONLY a valid JSON array of objects with keys "id" (int) and "action" (string):
-[
-  {{"id": 1, "action": "{hero_anchor} ..."}},
-  {{"id": 2, "action": "{hero_anchor} ..."}}
-]
+PRIMARY GOAL:
+You will be given the FULL NARRATIVE SCRIPT of the video and its chronological scene segments.
+You MUST read and deeply digest the entire script first to grasp the overarching topic, world-building, emotional tone, and narrative progression.
+Then, translate each scene segment into a contextually accurate, visually engaging 2D doodle storyboard action that directly illustrates that narration line while keeping seamless visual continuity with the story.
+
+CORE ARTISTIC SPECIFICATIONS:
+- Visual Style: Hand-drawn 2D doodle cartoon animation, flat solid colors, bold black hand-drawn outlines, slightly wobbly imperfect marker lines.
+- Main Character Anchor: {hero_anchor}.
+{bg_instruction}
+{topic_rules_instruction}
+STRICT DIRECTING & VISUAL CONTINUITY RULES:
+1. DEEP STORY COMPREHENSION (AVOID OFF-TOPIC VISUALS):
+   - The narration sentences may be in Vietnamese or English. You must translate the semantic meaning of each sentence into an accurate 2D doodle scene description in ENGLISH.
+   - Ground every scene in the story's actual world:
+     * If the story is about Ancient Humans on the prehistoric savanna: the environment must be savanna dirt, acacia trees, limestone caves, campfire, or starry sky. NEVER draw modern bedrooms, cars, or office desks unless the script is making an explicit modern contrast!
+     * If the story is about Ancient Civilizations (e.g. Srivijaya, Angkor, Mali): draw wooden stilt huts, dugout river boats, bustling clay pottery markets, salt bundles, river mist, or overgrown temple ruins.
+     * If the story is about Brain Psychology / Behavioral Science: draw relatable struggles, the 2D flat pink cartoon brain character with funny expressions, red megaphone shouting advice, brick walls of ego defense, dark bedroom with phone screen light, tangled dark scribble thought clouds, or bold red 'X' over false beliefs.
+
+2. STORYBOARD CONTINUITY & CINEMATOGRAPHY:
+   - Scenes must flow naturally like a cohesive movie storyboard.
+   - Do NOT just have the stick figure character standing in the center in every single scene. Vary the compositions:
+     * Establishing environment shots setting the mood and era (e.g., lone acacia tree under orange sunrise sky, misty river with stilt huts).
+     * Action & interaction shots (e.g., crouching by campfire blowing embers, spearfishing from wooden boat, running from predators).
+     * Close-ups of hands or significant props (e.g., weathered hands tying flint spearhead, holding glowing lantern, phone screen in dark).
+     * Conceptual & metaphorical shots (e.g., giant dark boulder with white label 'SURVIVAL', person building brick wall in front of self, big bold RED X slashing across a misconception).
+
+3. STRICT TEXT & LETTERING RULES:
+   - STRICTLY NO TEXT, NO SUBTITLES, NO WORDS, NO SPEECH BUBBLES IN THE DRAWING.
+   - The visual storytelling must be 100% illustrative.
+   - ONLY allow short ALL-CAPS single-word labels if explicitly specified by theme devices (e.g. 'SURVIVAL' on a boulder, 'REACTANCE', '300,000 YEARS').
+
+4. OUTPUT FORMAT:
+   - Each visual action description must be in ENGLISH (15–30 words) describing: [Subject/Character] + [Specific action & expression] + [Key props/metaphor] + [Environment].
+   - Return strictly valid JSON array of objects with keys "id" (int) and "action" (string):
+   [
+     {{"id": 1, "action": "..."}},
+     {{"id": 2, "action": "..."}}
+   ]
 """
 
     actions_map: Dict[int, str] = {}
-    input_items = [{"id": s["id"], "text": s["text"]} for s in scenes]
-    user_prompt = (
-        f"Topic: {topic or 'Story Studio Narrative'}\n"
-        f"Total scenes: {len(scenes)}\n\n"
-        f"Full Narration Transcript:\n{json.dumps(input_items, ensure_ascii=False)}\n\n"
-        f"Generate JSON array of visual actions for ALL {len(scenes)} scenes in exact order (id 1 to {len(scenes)}):"
-    )
+    input_items = [{"id": s["id"], "timestamp": s.get("timestamp_str", ""), "text": s["text"]} for s in scenes]
 
-    # Single-shot full transcript request with streaming to prevent Cloudflare 524 timeout
+    if target_scene_id is not None:
+        target_item = next((s for s in scenes if s["id"] == target_scene_id), None) or scenes[0]
+        prev_scenes = [s for s in scenes if s["id"] < target_item["id"]][-3:]
+        next_scenes = [s for s in scenes if s["id"] > target_item["id"]][:3]
+        timeline_context = []
+        for ps in prev_scenes:
+            timeline_context.append(f"Scene #{ps['id']} [{ps.get('timestamp_str', '')}]: \"{ps.get('text', '')}\"")
+        timeline_context.append(f">>> [CURRENT TARGET SCENE #{target_item['id']}]: \"{target_item.get('text', '')}\" <<<")
+        for ns in next_scenes:
+            timeline_context.append(f"Scene #{ns['id']} [{ns.get('timestamp_str', '')}]: \"{ns.get('text', '')}\"")
+
+        user_prompt = (
+            f"=== 1. STORY TOPIC & CORE CONCEPT ===\n"
+            f"{topic or 'Educational Story Explainer'}\n\n"
+            f"=== 2. FULL ORIGINAL SCRIPT (FULL CONTEXT - READ & COMPREHEND FIRST) ===\n"
+            f"{script_content}\n\n"
+            f"=== 3. SURROUNDING TIMELINE CONTEXT ===\n"
+            f"{chr(10).join(timeline_context)}\n\n"
+            f"=== INSTRUCTION ===\n"
+            f"Generate a rich, cohesive visual action description specifically for TARGET SCENE #{target_item['id']}.\n"
+            f"Sentence to illustrate: \"{target_item.get('text', '')}\"\n"
+            f"Make sure this scene visual directly represents that sentence and fits seamlessly with the surrounding scenes in the story world.\n"
+            f"Return ONLY a JSON array with this single object:\n"
+            f"[\n"
+            f"  {{\"id\": {target_item['id']}, \"action\": \"...\"}}\n"
+            f"]"
+        )
+    else:
+        user_prompt = (
+            f"=== 1. STORY TOPIC & CORE CONCEPT ===\n"
+            f"{topic or 'Educational Story Explainer'}\n\n"
+            f"=== 2. FULL ORIGINAL SCRIPT (READ & DIGEST THIS ENTIRE NARRATIVE FIRST) ===\n"
+            f"{script_content}\n\n"
+            f"=== 3. CHRONOLOGICAL SCENE TIMELINE ({len(scenes)} SCENES) ===\n"
+            f"Here are the {len(scenes)} scenes in exact chronological order:\n"
+            f"{json.dumps(input_items, ensure_ascii=False, indent=2)}\n\n"
+            f"=== INSTRUCTION ===\n"
+            f"Based on your comprehension of the FULL SCRIPT above, storyboard all {len(scenes)} scenes in exact numerical order.\n"
+            f"Ensure every scene directly illustrates its narration sentence while keeping seamless visual continuity with the story arc.\n"
+            f"Return ONLY the JSON array (id 1 to {len(scenes)}):"
+        )
+
+    # Execute LLM request with streaming to prevent Cloudflare 524 timeout
     async with httpx.AsyncClient(timeout=300.0) as client:
         for attempt in range(2):
             try:
@@ -1343,72 +1562,78 @@ CRITICAL RULES:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
-                        "temperature": 0.4,
+                        "temperature": 0.35,
                     },
                     stream=True,
                 )
-                m = re.search(r"\[.*\]", content, re.DOTALL)
-                if m:
-                    parsed = json.loads(m.group(0))
-                    for item in parsed:
-                        if "id" in item and "action" in item:
-                            actions_map[int(item["id"])] = str(item["action"]).strip()
-                    logger.info("Successfully received %d/%d scene actions from AI in 1 single shot", len(actions_map), len(scenes))
+                parsed_actions = _parse_llm_json_actions(content)
+                if parsed_actions:
+                    actions_map.update(parsed_actions)
+                    logger.info("Successfully received %d scene actions from AI (target=%s)", len(actions_map), target_scene_id or "all")
                     break
                 else:
-                    logger.warning("Attempt %d: No JSON array in AI response: %s", attempt + 1, content[:200])
+                    logger.warning("Attempt %d: Failed to parse JSON from AI response: %s", attempt + 1, content[:200])
             except Exception as e:
-                logger.warning("Attempt %d failed for 1-shot full prompt generation: %s", attempt + 1, e)
+                logger.warning("Attempt %d failed for prompt generation: %s", attempt + 1, e)
                 if attempt == 0:
                     await asyncio.sleep(2.0)
 
-    # If any scene IDs were accidentally skipped by the LLM, do a targeted fill for those few missing IDs
-    missing_ids = [s["id"] for s in scenes if s["id"] not in actions_map]
-    if missing_ids and len(missing_ids) <= 20:
-        logger.info("Filling %d missing scene IDs from AI: %s", len(missing_ids), missing_ids)
-        missing_scenes = [s for s in scenes if s["id"] in missing_ids]
-        missing_items = [{"id": s["id"], "text": s["text"]} for s in missing_scenes]
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                c = await _call_llm_completion(
-                    client=client,
-                    url=f"{burl}/chat/completions",
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    payload={
-                        "model": mod,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"Generate missing scene actions in JSON array:\n{json.dumps(missing_items, ensure_ascii=False)}"},
-                        ],
-                        "temperature": 0.3,
-                    },
-                    stream=True,
-                )
-                m = re.search(r"\[.*\]", c, re.DOTALL)
-                if m:
-                    for item in json.loads(m.group(0)):
-                        if "id" in item and "action" in item:
-                            actions_map[int(item["id"])] = str(item["action"]).strip()
-        except Exception as err:
-            logger.warning("Failed to fill missing scenes with AI: %s", err)
+    # If generating all scenes and any IDs were skipped, do a targeted fill for those missing IDs
+    if target_scene_id is None:
+        missing_ids = [s["id"] for s in scenes if s["id"] not in actions_map]
+        if missing_ids and len(missing_ids) <= 20:
+            logger.info("Filling %d missing scene IDs from AI: %s", len(missing_ids), missing_ids)
+            missing_scenes = [s for s in scenes if s["id"] in missing_ids]
+            missing_items = [{"id": s["id"], "text": s["text"]} for s in missing_scenes]
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    c = await _call_llm_completion(
+                        client=client,
+                        url=f"{burl}/chat/completions",
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                        payload={
+                            "model": mod,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": f"Generate missing scene actions in JSON array:\n{json.dumps(missing_items, ensure_ascii=False)}"},
+                            ],
+                            "temperature": 0.3,
+                        },
+                        stream=True,
+                    )
+                    fill_actions = _parse_llm_json_actions(c)
+                    actions_map.update(fill_actions)
+            except Exception as err:
+                logger.warning("Failed to fill missing scenes with AI: %s", err)
 
     # Fallback to rule-based for any scenes that still missed AI generation
-    rule_scenes = build_scene_prompts(scenes, hero_lock, topic, style=style)
+    rule_scenes = build_scene_prompts(scenes, hero_lock, topic, style=style, background_mode=background_mode, topic_requirements=topic_requirements)
     rule_map = {s["id"]: s["prompt"] for s in rule_scenes}
 
     enriched = []
     for item in scenes:
         sid = item["id"]
-        if sid in actions_map:
+        if (target_scene_id is None or sid == target_scene_id) and sid in actions_map:
             raw_action = actions_map[sid]
             # Strip accidental repeated prefix/suffix from model
             clean_act = re.sub(r"^Hand-drawn.*?marker lines,\s*", "", raw_action, flags=re.IGNORECASE)
-            clean_act = re.sub(r",\s*plain cream background.*$", "", clean_act, flags=re.IGNORECASE)
+            if is_fixed_bg:
+                clean_act = re.sub(r",\s*plain cream background.*$", "", clean_act, flags=re.IGNORECASE)
             clean_act = re.sub(r",\s*no text.*$", "", clean_act, flags=re.IGNORECASE)
             clean_act = clean_act.strip().rstrip(",")
-            full_prompt = f"{prefix}{clean_act}{suffix}"
+
+            # Check if action intentionally features an on-object label (e.g. 'SURVIVAL' or '300,000 YEARS')
+            has_quoted_label = bool(re.search(r"['\"][A-Z0-9_\s]{2,25}['\"]", clean_act))
+            cur_suffix = suffix
+            if has_quoted_label and "no text" in cur_suffix:
+                cur_suffix = cur_suffix.replace(
+                    "no text, no words, no letters, no subtitles, no speech bubbles, no captions",
+                    "single bold keyword on object only, no subtitles, no paragraph text, no speech bubbles, no captions"
+                )
+
+            full_prompt = f"{prefix}{clean_act}{cur_suffix}"
         else:
-            full_prompt = rule_map.get(sid, "")
+            full_prompt = item.get("prompt") or rule_map.get(sid, "")
 
         enriched.append({
             **item,

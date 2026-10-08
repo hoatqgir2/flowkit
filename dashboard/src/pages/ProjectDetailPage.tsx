@@ -13,7 +13,7 @@ import { Progress } from '../components/ui/progress'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../components/ui/table'
 import { Button } from '../components/ui/button'
-import { Sparkles } from 'lucide-react'
+import { Sparkles, Trash2 } from 'lucide-react'
 
 type Tab = 'overview' | 'characters' | 'videos' | 'pipeline'
 const STAGE_KEYS: ('refs' | SceneStage)[] = ['refs', 'image', 'video', 'upscale']
@@ -88,6 +88,17 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
     fetchAll()
   }
 
+  async function handleDelete() {
+    if (!project) return
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa dự án "${project.name}"?`)) return
+    try {
+      await fetchAPI(`/api/projects/${projectId}`, { method: 'DELETE' })
+      onBack()
+    } catch (err: any) {
+      alert(err.message || 'Lỗi khi xóa dự án')
+    }
+  }
+
   if (loading || !project) {
     return <div className="text-xs" style={{ color: 'var(--muted)' }}>{t('projectDetail.loading')}</div>
   }
@@ -119,6 +130,16 @@ export default function ProjectDetailPage({ projectId, onBack }: Props) {
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
             <span>Mở Pipeline</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDelete}
+            title="Xóa dự án này"
+            className="gap-1.5 cursor-pointer text-slate-400 hover:text-rose-400 hover:border-rose-800"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Xóa dự án</span>
           </Button>
           <Button variant="ghost" size="sm" onClick={onBack}>
             {t('projectDetail.back')}

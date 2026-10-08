@@ -192,4 +192,193 @@ async def test_call_llm_completion_streaming():
     assert out == '[{"id": 1, "action": "test action"}]'
 
 
+@pytest.mark.asyncio
+async def test_generate_scene_prompts_ai_background_modes(monkeypatch):
+    import agent.services.story_studio as ss
+    import json
+
+    class DummyResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps([
+                            {"id": 1, "action": "The main stick figure lying in bed in a dark bedroom at night with glowing phone"},
+                        ])
+                    }
+                }]
+            }
+
+    class DummyClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr(ss.httpx, "AsyncClient", lambda **kw: DummyClient())
+
+    scenes = [{"id": 1, "text": "Midnight in your bedroom."}]
+
+    # 1. Fixed mode: forces cream background suffix
+    res_fixed = await ss.generate_scene_prompts_ai(
+        scenes,
+        hero_lock="The main stick figure",
+        base_url="https://fake.ai.com/v1",
+        api_key="fake-key",
+        model="fake-model",
+        background_mode="fixed",
+    )
+    p_fixed = res_fixed[0]["prompt"]
+    assert "plain cream background with a gray ground strip" in p_fixed
+
+    # 2. Dynamic mode: preserves custom contextual background and does NOT force cream background in suffix
+    res_dynamic = await ss.generate_scene_prompts_ai(
+        scenes,
+        hero_lock="The main stick figure",
+        base_url="https://fake.ai.com/v1",
+        api_key="fake-key",
+        model="fake-model",
+        background_mode="dynamic",
+    )
+    p_dynamic = res_dynamic[0]["prompt"]
+    assert "dark bedroom at night with glowing phone" in p_dynamic
+    assert "plain cream background with a gray ground strip" not in p_dynamic
+
+
+@pytest.mark.asyncio
+async def test_generate_scene_prompts_ai_topic_requirements(monkeypatch):
+    import agent.services.story_studio as ss
+    import json
+
+    captured_system_prompt = ""
+
+    class DummyResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps([
+                            {"id": 1, "action": "The main stick figure holding a wooden spear, giant boulder with label 'SURVIVAL' in background"},
+                        ])
+                    }
+                }]
+            }
+
+    class DummyClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            nonlocal captured_system_prompt
+            msgs = kwargs.get("json", {}).get("messages", [])
+            for m in msgs:
+                if m.get("role") == "system":
+                    captured_system_prompt = m.get("content", "")
+            return DummyResponse()
+
+    monkeypatch.setattr(ss.httpx, "AsyncClient", lambda **kw: DummyClient())
+
+    scenes = [{"id": 1, "text": "Survival was a brutal struggle."}]
+    custom_rules = "- Savanna landscape with lone acacia tree.\n- Boulder labeled 'SURVIVAL'."
+
+    res = await ss.generate_scene_prompts_ai(
+        scenes,
+        hero_lock="The main stick figure with spiky orange hair",
+        base_url="https://fake.ai.com/v1",
+        api_key="fake-key",
+        model="fake-model",
+        topic_requirements=custom_rules,
+    )
+
+    # Verify custom rules were injected into system prompt
+    assert "MANDATORY THEME & TOPIC RULES" in captured_system_prompt
+    assert "Savanna landscape with lone acacia tree" in captured_system_prompt
+
+    # Verify quoted label in action causes suffix to allow single bold keyword on object
+    prompt = res[0]["prompt"]
+    assert "'SURVIVAL'" in prompt
+    assert "single bold keyword on object only" in prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_scene_prompts_ai_full_script_and_target_scene(monkeypatch):
+    import agent.services.story_studio as ss
+    import json
+
+    captured_user_prompts = []
+
+    class DummyResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": json.dumps([
+                            {"id": 2, "action": "The main stick figure hunter tying flint arrowhead beside crackling campfire under lone acacia tree"}
+                        ])
+                    }
+                }]
+            }
+
+    class DummyClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            nonlocal captured_user_prompts
+            msgs = kwargs.get("json", {}).get("messages", [])
+            for m in msgs:
+                if m.get("role") == "user":
+                    captured_user_prompts.append(m.get("content", ""))
+            return DummyResponse()
+
+    monkeypatch.setattr(ss.httpx, "AsyncClient", lambda **kw: DummyClient())
+
+    scenes = [
+        {"id": 1, "timestamp_str": "00:00", "text": "For 300,000 years on the prehistoric savanna."},
+        {"id": 2, "timestamp_str": "00:04", "text": "Hunting was a matter of life and death."},
+        {"id": 3, "timestamp_str": "00:08", "text": "The tribe gathered at night for warmth."},
+    ]
+    full_story_script = (
+        "For 300,000 years on the prehistoric savanna, humans survived with simple stone tools. "
+        "Hunting was a matter of life and death, requiring patience and teamwork. "
+        "The tribe gathered at night for warmth and safety around the fire."
+    )
+
+    # 1. Regenerate single scene (target_scene_id=2)
+    res = await ss.generate_scene_prompts_ai(
+        scenes,
+        hero_lock="The main stick figure with spiky orange hair",
+        topic="Prehistoric Human Evolution",
+        base_url="https://fake.ai.com/v1",
+        api_key="fake-key",
+        model="fake-model",
+        full_script=full_story_script,
+        target_scene_id=2,
+    )
+
+    assert len(captured_user_prompts) == 1
+    user_prompt = captured_user_prompts[0]
+
+    # Verify full script was delivered to LLM to comprehend
+    assert "=== 2. FULL ORIGINAL SCRIPT" in user_prompt
+    assert "humans survived with simple stone tools" in user_prompt
+
+    # Verify timeline context surrounding scene #2 was included
+    assert "Scene #1" in user_prompt
+    assert "CURRENT TARGET SCENE #2" in user_prompt
+    assert "Scene #3" in user_prompt
+
+    # Verify scene #2 prompt was updated, and scenes #1 & #3 were preserved
+    assert len(res) == 3
+    assert "tying flint arrowhead" in res[1]["prompt"]
+    assert res[1]["id"] == 2
+
+
+
+
+
 

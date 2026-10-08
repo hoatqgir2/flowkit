@@ -28,6 +28,10 @@ import {
   Pencil,
   Trash2,
   Settings,
+  Layers,
+  Lock,
+  Tag,
+  Save,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -74,6 +78,8 @@ interface StoryProject {
   video_size?: number
   has_subtitles?: boolean
   prompt_style?: string
+  background_mode?: 'dynamic' | 'fixed'
+  topic_requirements?: string
 }
 
 export interface PromptStyleInfo {
@@ -84,6 +90,7 @@ export interface PromptStyleInfo {
   badge_color: string
   default_hero_lock: string
   key_elements: string[]
+  default_topic_requirements?: string
 }
 
 export const PROMPT_STYLES: PromptStyleInfo[] = [
@@ -95,6 +102,9 @@ export const PROMPT_STYLES: PromptStyleInfo[] = [
     badge_color: 'bg-amber-950/70 text-amber-300 border-amber-800/60',
     default_hero_lock: 'The main stick figure character from the reference image',
     key_elements: ['Thuyền độc mộc & sông nước', 'Chợ phiên đồ gốm, cá & muối', 'Đền đài gạch chéo đỏ X', 'Khóa theo ảnh nhân vật tham chiếu'],
+    default_topic_requirements: `- Bối cảnh sông nước & làng quê: Nhà sàn gỗ mộc mạc, sương sớm mờ ảo trên mặt sông, thuyền độc mộc hẹp với mái chèo đơn trên làn nước êm đềm.
+- Đời sống thường nhật: Chợ phiên ngoài trời nhộn nhịp với chum vại gốm nung, các bó muối trắng và cá khô trải trên chiếu cói; đồng lúa xanh ngát vùng ngoại ô.
+- Yếu tố biểu tượng: Phế tích đền đá cổ kính bị gạch chéo đỏ X to đậm ngang khung hình để bác bỏ ảo tưởng về cung điện/kho báu hoàng gia; lửa trại bên bờ sông lúc hoàng hôn dưới trăng lưỡi liềm vàng.`,
   },
   {
     id: 'ancient_humans',
@@ -104,6 +114,16 @@ export const PROMPT_STYLES: PromptStyleInfo[] = [
     badge_color: 'bg-orange-950/70 text-orange-300 border-orange-800/60',
     default_hero_lock: 'The main stick figure character from the reference image with spiky bright orange hair',
     key_elements: ['Thảo nguyên savanna cây keo (acacia)', 'Tảng đá lớn dán nhãn chữ trắng (SURVIVAL)', 'Lửa trại bộ lạc & nhà khảo cổ nón cối', 'Mây mưa gian khổ & Dấu X đỏ phủ định'],
+    default_topic_requirements: `- Bối cảnh tiền sử: Thảo nguyên savanna rộng lớn với bầu trời cam hoàng hôn/bình minh, nền đất nâu cát với khóm cỏ dại và cây keo (acacia) tán phẳng đơn độc ở xa; ban ngày trời xanh đất nâu cát.
+- Nhân vật & kiểu tóc: Nhân vật chính 'bạn' có tóc cam nhọn dựng đứng (#F58220); người tiền sử tổ tiên có mái tóc nâu bù xù; nhân vật thời hiện đại đầu tròn trắng trọc.
+- Thiết bị hình ảnh đặc trưng (Ancient Humans Framework):
+  * Ngọn giáo gỗ nguyên thủy cầm trên tay với vẻ mặt nghiến răng kiên định khi đi săn hoặc đối mặt thú dữ.
+  * Tảng đá xám khổng lồ có nhãn chữ trắng IN HOA viết tay 'SURVIVAL' cho các khái niệm sinh tồn trừu tượng.
+  * Bộ lạc thân thiện ngồi thành vòng tròn quanh đống lửa trại bập bùng trên nền đất cát.
+  * Nhà khảo cổ đội nón cối màu nâu, đeo ba lô, cầm đèn bão vàng đứng bên cạnh cửa hang đá tối.
+  * Gian khổ / đau đớn: Nhân vật que ngồi bó gối buồn bã dưới đám mây xám đổ mưa hạt xanh.
+  * Dấu X đỏ phủ định: Nhân vật hoặc hình vẽ minh họa bị gạch chéo một dấu X ĐỎ to bản ngang khung hình ('quan niệm sai / không phải thế này').
+  * Khung mốc thời gian: Nền trắng/kem với chữ số đỏ nổi bật viết tay in hoa (ví dụ: '300,000 YEARS').`,
   },
   {
     id: 'brain_psychology',
@@ -113,6 +133,15 @@ export const PROMPT_STYLES: PromptStyleInfo[] = [
     badge_color: 'bg-rose-950/70 text-rose-300 border-rose-800/60',
     default_hero_lock: 'The main minimalist stick figure character from the reference image with a round white head',
     key_elements: ['Bộ não hoạt hình 2D màu hồng biểu cảm', 'Người que bịt tai phớt lờ loa phóng thanh', 'Bẫy dopamine (lướt điện thoại, giường ngủ)', 'Đám mây suy nghĩ rối rắm & Thiên kiến nhận thức'],
+    default_topic_requirements: `- Bối cảnh & Nhân vật: Người que tối giản đầu tròn trắng; bối cảnh đời thường hiện đại (bàn làm việc với laptop, phòng ngủ đêm, ngã rẽ hai con đường).
+- Thiết bị hình ảnh đặc trưng:
+  * Người que bịt tai quay mặt đi trước một chiếc loa phóng thanh màu đỏ đang phát ra biểu tượng sóng âm lời khuyên.
+  * Phòng ngủ lúc nửa đêm: nằm trùm chăn trong bóng tối, mặt sáng lên bởi ánh đèn màn hình điện thoại đang lướt ngón tay.
+  * Phòng thủ cái tôi: vội vã xây một bức tường gạch hoạt hình trước mặt rồi thò đầu nhìn qua với vẻ mặt cố chấp.
+  * Đám mây suy nghĩ rối như búi len đen lơ lửng trên đầu tượng trưng cho lo âu, rối rắm nhận thức.
+  * Bộ não hoạt hình 2D phẳng màu hồng nhỏ xinh với biểu cảm ngộ nghĩnh cho các chi tiết về thần kinh.
+  * Thẻ khái niệm với từ khóa ĐỎ IN HOA viết tay (ví dụ: 'REACTANCE', 'BIAS', 'DOPAMINE') khi định nghĩa thuật ngữ.
+  * Dấu X đỏ gạch chéo phủ định quan niệm sai lầm và thiên kiến tâm lý.`,
   },
 ]
 
@@ -129,6 +158,7 @@ const PRESET_TOPICS = [
 export default function StoryStudioPage() {
   const [projects, setProjects] = useState<{ id: string; title: string; keyword: string; stage: number }[]>([])
   const [currentProject, setCurrentProject] = useState<StoryProject | null>(null)
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [activeStage, setActiveStage] = useState<number>(1)
   const [loading, setLoading] = useState<boolean>(false)
   const [statusMsg, setStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -159,6 +189,10 @@ export default function StoryStudioPage() {
   // Stage 5 State (Images)
   const [imageModel, setImageModel] = useState<string>('BELUGA')
   const [promptStyle, setPromptStyle] = useState<string>('forgotten_civilizations')
+  const [backgroundMode, setBackgroundMode] = useState<'dynamic' | 'fixed'>('dynamic')
+  const [topicRequirements, setTopicRequirements] = useState<string>('')
+  const [topicSaveStatus, setTopicSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const saveTimeoutRef = useRef<any>(null)
   const [delayMin, setDelayMin] = useState<number>(() => {
     const saved = localStorage.getItem('fk_batch_delay_min')
     return saved !== null ? Number(saved) : 5
@@ -227,12 +261,19 @@ export default function StoryStudioPage() {
     localStorage.setItem('fk_batch_timeout', String(batchTimeout))
   }, [batchTimeout])
 
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+    }
+  }, [])
+
   // Load projects list
   const loadProjects = async () => {
     try {
       const data = await fetchAPI<{ projects: any[] }>('/api/story-studio/projects')
       setProjects(data.projects || [])
       if (!currentProject && data.projects?.length > 0) {
+        setSelectedProjectId(data.projects[0].id)
         loadProjectDetail(data.projects[0].id)
       } else if (!currentProject && data.projects?.length === 0) {
         createNewProject('Câu Chuyện Mới')
@@ -247,12 +288,30 @@ export default function StoryStudioPage() {
   }, [])
 
   const loadProjectDetail = async (id: string) => {
+    setSelectedProjectId(id)
     try {
       setLoading(true)
       const proj = await fetchAPI<StoryProject>(`/api/story-studio/projects/${id}`)
       setCurrentProject(proj)
       setHeroLock(proj.hero_lock || '')
       setPromptStyle(proj.prompt_style || 'forgotten_civilizations')
+
+      const localBg = localStorage.getItem(`fk_bg_mode_${id}`) as 'dynamic' | 'fixed' | null
+      const effectiveBg = (proj.background_mode as 'dynamic' | 'fixed') || localBg || 'dynamic'
+      setBackgroundMode(effectiveBg)
+
+      const localTopic = localStorage.getItem(`fk_topic_reqs_${id}`)
+      const effectiveTopic = (proj.topic_requirements !== undefined && proj.topic_requirements !== null && proj.topic_requirements !== '')
+        ? proj.topic_requirements
+        : (localTopic !== null && localTopic !== undefined ? localTopic : (proj.topic_requirements || ''))
+      setTopicRequirements(effectiveTopic)
+      setTopicSaveStatus('idle')
+
+      if (effectiveTopic) {
+        localStorage.setItem(`fk_topic_reqs_${id}`, effectiveTopic)
+      }
+      localStorage.setItem(`fk_bg_mode_${id}`, effectiveBg)
+
       if (proj.flow_project_id) {
         setFlowProjectId(proj.flow_project_id)
         localStorage.setItem('fk_last_flow_project_id', proj.flow_project_id)
@@ -262,6 +321,7 @@ export default function StoryStudioPage() {
       setActiveStage(proj.current_stage || 1)
       setStatusMsg(null)
     } catch (e: any) {
+      setCurrentProject(null)
       setStatusMsg({ type: 'err', text: e.message || 'Không thể tải dự án' })
     } finally {
       setLoading(false)
@@ -279,6 +339,8 @@ export default function StoryStudioPage() {
           keyword: topic || '',
           hero_lock: heroLock || undefined,
           prompt_style: promptStyle || 'forgotten_civilizations',
+          background_mode: backgroundMode || 'dynamic',
+          topic_requirements: topicRequirements || '',
         }),
       })
       await loadProjects()
@@ -334,21 +396,24 @@ export default function StoryStudioPage() {
   }
 
   const handleDeleteProject = async () => {
-    if (!currentProject) return
+    const targetId = currentProject?.id || selectedProjectId
+    if (!targetId) return
     try {
       setIsDeletingProject(true)
-      const deletedTitle = currentProject.title
-      await fetchAPI(`/api/story-studio/projects/${currentProject.id}`, {
+      const targetProj = projects.find(p => p.id === targetId)
+      const deletedTitle = targetProj?.title || currentProject?.title || 'dự án'
+      await fetchAPI(`/api/story-studio/projects/${targetId}`, {
         method: 'DELETE',
       })
       setShowDeleteModal(false)
-      const remaining = projects.filter(p => p.id !== currentProject.id)
+      const remaining = projects.filter(p => p.id !== targetId)
       setProjects(remaining)
       setStatusMsg({ type: 'ok', text: `Đã xóa dự án "${deletedTitle}" thành công!` })
       if (remaining.length > 0) {
         await loadProjectDetail(remaining[0].id)
       } else {
         setCurrentProject(null)
+        setSelectedProjectId('')
         await createNewProject('Câu Chuyện Mới')
       }
     } catch (e: any) {
@@ -652,6 +717,119 @@ export default function StoryStudioPage() {
     }
   }
 
+  // ── Stage 5: Topic Theme Rules & Background Mode Auto-Save ─────────
+  const handleSaveTopicConfig = async (
+    customRequirements?: string,
+    customBgMode?: 'dynamic' | 'fixed',
+    customStyle?: string,
+    silent: boolean = false
+  ) => {
+    if (!currentProject) return
+    const targetReqs = customRequirements !== undefined ? customRequirements : topicRequirements
+    const targetBg = customBgMode !== undefined ? customBgMode : backgroundMode
+    const targetStyle = customStyle !== undefined ? customStyle : promptStyle
+
+    try {
+      if (!silent) setTopicSaveStatus('saving')
+      const updated = await fetchAPI<StoryProject>(`/api/story-studio/projects/${currentProject.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic_requirements: targetReqs,
+          background_mode: targetBg,
+          prompt_style: targetStyle,
+        }),
+      })
+
+      setCurrentProject(prev => prev ? {
+        ...prev,
+        topic_requirements: updated.topic_requirements ?? targetReqs,
+        background_mode: updated.background_mode ?? targetBg,
+        prompt_style: updated.prompt_style ?? targetStyle,
+      } : null)
+
+      // Sync to localStorage
+      localStorage.setItem(`fk_topic_reqs_${currentProject.id}`, targetReqs)
+      localStorage.setItem(`fk_bg_mode_${currentProject.id}`, targetBg)
+      localStorage.setItem(`fk_prompt_style_${currentProject.id}`, targetStyle)
+
+      if (!silent) {
+        setTopicSaveStatus('saved')
+        setTimeout(() => {
+          setTopicSaveStatus(prev => prev === 'saved' ? 'idle' : prev)
+        }, 3000)
+      }
+    } catch (e: any) {
+      console.error('Failed to save topic config:', e)
+      if (!silent) {
+        setTopicSaveStatus('error')
+        setStatusMsg({ type: 'err', text: e.message || 'Lỗi lưu cấu hình chủ đề' })
+      }
+    }
+  }
+
+  const handleTopicRequirementsChange = (val: string) => {
+    setTopicRequirements(val)
+    if (currentProject) {
+      localStorage.setItem(`fk_topic_reqs_${currentProject.id}`, val)
+    }
+    setTopicSaveStatus('idle')
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      handleSaveTopicConfig(val, undefined, undefined, false)
+    }, 1200)
+  }
+
+  const handleTopicRequirementsBlur = () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+    }
+    handleSaveTopicConfig(topicRequirements, undefined, undefined, false)
+  }
+
+  const handleApplyPreset = (styleId: string) => {
+    const p = PROMPT_STYLES.find(s => s.id === styleId)
+    if (!p) return
+    const newReqs = p.default_topic_requirements || ''
+    setTopicRequirements(newReqs)
+    setPromptStyle(styleId)
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+    }
+    handleSaveTopicConfig(newReqs, undefined, styleId, false)
+    setStatusMsg({
+      type: 'ok',
+      text: `Đã nạp & lưu mẫu quy tắc chủ đề "${p.name}"!`,
+    })
+  }
+
+  const handleClearTopicRules = () => {
+    setTopicRequirements('')
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+    }
+    handleSaveTopicConfig('', undefined, undefined, false)
+    setStatusMsg({
+      type: 'ok',
+      text: 'Đã xóa trống & lưu cấu hình quy tắc chủ đề!',
+    })
+  }
+
+  const handleSelectBackgroundMode = (mode: 'dynamic' | 'fixed') => {
+    setBackgroundMode(mode)
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+    }
+    handleSaveTopicConfig(undefined, mode, undefined, false)
+  }
+
   // ── Stage 5: Scene Prompts & Images ─────────────────────────────────
   const handleBuildPrompts = async (targetStyle?: string) => {
     if (!currentProject) return
@@ -661,14 +839,25 @@ export default function StoryStudioPage() {
       const res = await fetchAPI<any>(`/api/story-studio/projects/${currentProject.id}/build-prompts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hero_lock: heroLock, style: activeStyle }),
+        body: JSON.stringify({
+          hero_lock: heroLock,
+          style: activeStyle,
+          background_mode: backgroundMode,
+          topic_requirements: topicRequirements,
+        }),
       })
-      setCurrentProject(prev => prev ? { ...prev, scenes: res.scenes, prompt_style: activeStyle } : null)
+      setCurrentProject(prev => prev ? {
+        ...prev,
+        scenes: res.scenes,
+        prompt_style: activeStyle,
+        background_mode: backgroundMode,
+        topic_requirements: topicRequirements,
+      } : null)
       setPromptStyle(activeStyle)
       const matched = PROMPT_STYLES.find(s => s.id === activeStyle)
       setStatusMsg({
         type: 'ok',
-        text: `Đã tái tạo prompt Doodle chuẩn phong cách "${matched?.name || activeStyle}" cho tất cả ${res.scenes?.length || 0} cảnh!`
+        text: `Đã tái tạo prompt Doodle chuẩn phong cách "${matched?.name || activeStyle}" (${backgroundMode === 'dynamic' ? 'Bối cảnh động AI' : 'Nền kem studio'}) cho tất cả ${res.scenes?.length || 0} cảnh!`
       })
     } catch (e: any) {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi build prompt' })
@@ -687,8 +876,8 @@ export default function StoryStudioPage() {
     setStatusMsg({
       type: 'ok',
       text: sceneId !== undefined
-        ? `Đang dùng AI (${aiModel}) sinh prompt bám sát kịch bản cho cảnh #${sceneId}...`
-        : `Đang gửi toàn bộ transcript (${totalScenes} câu) vào AI (${aiModel}) trong 1 lượt duy nhất để sinh prompt đồng bộ cho tất cả timeline (vui lòng chờ)...`,
+        ? `Đang dùng AI (${aiModel}) sinh prompt bám sát kịch bản cho cảnh #${sceneId} (${backgroundMode === 'dynamic' ? 'Bối cảnh động theo AI' : 'Nền kem studio'})...`
+        : `Đang gửi toàn bộ transcript (${totalScenes} câu) vào AI (${aiModel}) để sinh prompt [${backgroundMode === 'dynamic' ? 'Bối cảnh động theo câu chuyện' : 'Nền kem studio'}] (vui lòng chờ)...`,
     })
 
     try {
@@ -703,16 +892,25 @@ export default function StoryStudioPage() {
           api_key: aiApiKey.trim(),
           model: aiModel.trim(),
           scene_id: sceneId,
+          background_mode: backgroundMode,
+          topic_requirements: topicRequirements,
+          script_text: currentProject.script_text || scriptText || '',
         }),
       })
 
-      setCurrentProject(prev => prev ? { ...prev, scenes: res.scenes, prompt_style: activeStyle } : null)
+      setCurrentProject(prev => prev ? {
+        ...prev,
+        scenes: res.scenes,
+        prompt_style: activeStyle,
+        background_mode: backgroundMode,
+        topic_requirements: topicRequirements,
+      } : null)
       setPromptStyle(activeStyle)
       setStatusMsg({
         type: 'ok',
         text: sceneId !== undefined
-          ? `✨ Đã sinh xong prompt AI cho cảnh #${sceneId}!`
-          : `✨ Đã nhận đầy đủ prompt từ AI trong 1 lượt gửi và cập nhật đồng bộ cho tất cả ${res.scenes?.length || 0} timeline!`,
+          ? `✨ Đã sinh xong prompt AI cho cảnh #${sceneId} (${backgroundMode === 'dynamic' ? 'Bối cảnh động' : 'Nền kem'})!`
+          : `✨ Đã nhận đầy đủ prompt từ AI trong 1 lượt gửi và cập nhật đồng bộ cho tất cả ${res.scenes?.length || 0} timeline (${backgroundMode === 'dynamic' ? 'Bối cảnh động theo kịch bản' : 'Nền kem studio'})!`,
       })
     } catch (e: any) {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi sinh prompt bằng AI' })
@@ -794,6 +992,27 @@ export default function StoryStudioPage() {
     } finally {
       clearTimeout(timer)
       activeAbortControllersRef.current.delete(sceneId)
+    }
+  }
+
+  const handleUpdateScenePrompt = async (sceneId: number, newPrompt: string) => {
+    if (!currentProject) return
+    setCurrentProject(prev => {
+      if (!prev || !prev.scenes) return prev
+      return {
+        ...prev,
+        scenes: prev.scenes.map(s => s.id === sceneId ? { ...s, prompt: newPrompt } : s),
+      }
+    })
+
+    try {
+      await fetchAPI(`/api/story-studio/projects/${currentProject.id}/scenes/${sceneId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: newPrompt }),
+      })
+    } catch (e: any) {
+      console.error(`Failed to update prompt for scene #${sceneId}:`, e)
     }
   }
 
@@ -1122,7 +1341,7 @@ export default function StoryStudioPage() {
             projects.length > 0 && (
               <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-lg p-1">
                 <select
-                  value={currentProject?.id || ''}
+                  value={currentProject?.id || selectedProjectId || (projects[0]?.id ?? '')}
                   onChange={e => loadProjectDetail(e.target.value)}
                   className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[200px] sm:max-w-[260px] truncate font-medium text-slate-200"
                 >
@@ -1132,30 +1351,28 @@ export default function StoryStudioPage() {
                 </select>
 
                 {currentProject && (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={handleStartEditTitle}
-                      title="Sửa tên dự án này"
-                      className="h-7 px-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 text-xs gap-1"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Sửa tên</span>
-                    </Button>
-
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setShowDeleteModal(true)}
-                      title="Xóa dự án này"
-                      className="h-7 px-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 text-xs gap-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Xóa</span>
-                    </Button>
-                  </>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleStartEditTitle}
+                    title="Sửa tên dự án này"
+                    className="h-7 px-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 text-xs gap-1"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Sửa tên</span>
+                  </Button>
                 )}
+
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowDeleteModal(true)}
+                  title="Xóa dự án này"
+                  className="h-7 px-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 text-xs gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Xóa</span>
+                </Button>
               </div>
             )
           )}
@@ -1993,7 +2210,7 @@ export default function StoryStudioPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => handleBuildPrompts('doodle')}
+                        onClick={() => handleBuildPrompts(promptStyle)}
                         disabled={loading || isAiBuildingPrompts || !currentProject?.scenes?.length}
                         className="border-slate-700 hover:bg-slate-800 text-slate-300 text-xs gap-1.5 h-8 font-medium"
                         title="Tạo prompt nhanh theo mẫu quy tắc có sẵn (không dùng AI)"
@@ -2014,9 +2231,172 @@ export default function StoryStudioPage() {
                     </div>
                   </div>
 
+                  {/* Background Mode Selector */}
+                  <div className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-lg flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-amber-400" />
+                        Chế độ bối cảnh nền (Background Mode):
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        {backgroundMode === 'dynamic'
+                          ? '✨ Bối cảnh thay đổi linh hoạt theo nội dung kịch bản và từng câu cụ thể (phòng ngủ đêm, thảo nguyên, dòng sông, văn phòng, ngã ba đường...).'
+                          : '🔒 Tất cả ảnh đều dùng chung 1 màu nền kem tối giản + vệt đất xám (phong cách MinutePhysics/Kurzgesagt tối giản).'}
+                      </p>
+                    </div>
+
+                    <div className="inline-flex rounded-lg p-0.5 bg-slate-950 border border-slate-700 text-xs font-medium">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectBackgroundMode('dynamic')}
+                        className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+                          backgroundMode === 'dynamic'
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-semibold shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                        title="Bối cảnh sinh tự động theo nội dung kịch bản và từng câu cụ thể theo AI"
+                      >
+                        <Sparkles className="w-3 h-3 text-purple-200" />
+                        2. Bối cảnh theo AI & Kịch bản (Khuyên dùng)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectBackgroundMode('fixed')}
+                        className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+                          backgroundMode === 'fixed'
+                            ? 'bg-amber-600 text-white font-semibold shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                        title="Fix cứng nền kem tối giản + vệt đất xám như hiện tại cho tất cả ảnh"
+                      >
+                        <Lock className="w-3 h-3 text-amber-200" />
+                        1. Fix cứng bối cảnh (Nền kem Studio)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Topic Mandatory Rules / Theme Requirements Panel */}
+                  <div className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-lg space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Tag className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="text-xs font-semibold text-slate-200">
+                          Yêu cầu & Chi tiết bắt buộc theo chủ đề (Topic Theme Rules):
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          (AI bắt buộc phải đưa vào prompt cho từng phân cảnh)
+                        </span>
+                      </div>
+
+                      {/* Quick preset buttons & Save Controls */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-slate-500 font-medium">Nạp nhanh mẫu:</span>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPreset('ancient_humans')}
+                          className={`px-2 py-0.5 rounded text-[10px] bg-orange-950/70 hover:bg-orange-900/90 text-orange-300 border transition-colors font-medium flex items-center gap-1 ${
+                            promptStyle === 'ancient_humans' ? 'border-orange-400 ring-1 ring-orange-500/50 shadow-sm font-semibold' : 'border-orange-700/60'
+                          }`}
+                          title="Nạp chuẩn Ancient Humans từ ancient_humans_master_prompt.txt (savanna, SURVIVAL boulder, campfire, archaeologist, red X...)"
+                        >
+                          🌿 Con Người Cổ Đại
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPreset('forgotten_civilizations')}
+                          className={`px-2 py-0.5 rounded text-[10px] bg-amber-950/70 hover:bg-amber-900/90 text-amber-300 border transition-colors font-medium flex items-center gap-1 ${
+                            promptStyle === 'forgotten_civilizations' ? 'border-amber-400 ring-1 ring-amber-500/50 shadow-sm font-semibold' : 'border-amber-700/60'
+                          }`}
+                          title="Nạp chuẩn Nền Văn Minh Bị Bỏ Quên (thuyền độc mộc, chợ làng, đền phế tích...)"
+                        >
+                          🏛️ Văn Minh Cổ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPreset('brain_psychology')}
+                          className={`px-2 py-0.5 rounded text-[10px] bg-rose-950/70 hover:bg-rose-900/90 text-rose-300 border transition-colors font-medium flex items-center gap-1 ${
+                            promptStyle === 'brain_psychology' ? 'border-rose-400 ring-1 ring-rose-500/50 shadow-sm font-semibold' : 'border-rose-700/60'
+                          }`}
+                          title="Nạp chuẩn Tâm Lý Học Não Bộ (loa phóng thanh, điện thoại đêm, bức tường gạch, não hồng...)"
+                        >
+                          🧠 Tâm Lý Học
+                        </button>
+                        {topicRequirements.trim() && (
+                          <button
+                            type="button"
+                            onClick={handleClearTopicRules}
+                            className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors"
+                            title="Xóa trống để tự nhập quy tắc riêng"
+                          >
+                            Xóa trống
+                          </button>
+                        )}
+
+                        {/* Save indicator & explicit save button */}
+                        <div className="flex items-center gap-1.5 ml-auto sm:ml-2 sm:pl-2 border-slate-800 sm:border-l">
+                          {topicSaveStatus === 'saving' && (
+                            <span className="text-[10px] text-amber-400 flex items-center gap-1 font-medium animate-pulse">
+                              <RotateCw className="w-3 h-3 animate-spin" /> Đang lưu...
+                            </span>
+                          )}
+                          {topicSaveStatus === 'saved' && (
+                            <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-medium">
+                              <Check className="w-3 h-3" /> Đã lưu
+                            </span>
+                          )}
+                          {topicSaveStatus === 'error' && (
+                            <span className="text-[10px] text-rose-400 flex items-center gap-1 font-medium">
+                              Lỗi lưu
+                            </span>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleSaveTopicConfig()}
+                            disabled={topicSaveStatus === 'saving' || !currentProject}
+                            className="h-6 px-2 text-[10px] border-slate-700 hover:bg-slate-800 text-slate-300 font-medium gap-1"
+                            title="Lưu cấu hình quy tắc chủ đề và chế độ nền vào dự án"
+                          >
+                            <Save className="w-3 h-3 text-amber-400" /> Lưu Quy Tắc
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <textarea
+                      value={topicRequirements}
+                      onChange={e => handleTopicRequirementsChange(e.target.value)}
+                      onBlur={handleTopicRequirementsBlur}
+                      placeholder="Nhập các quy tắc, bối cảnh đặc trưng, đạo cụ và nhân vật bắt buộc theo chủ đề... (Ví dụ chuẩn Cổ Đại: Thảo nguyên savanna cây keo, nhân vật tóc cam nhọn, tảng đá dán nhãn SURVIVAL, lửa trại bộ lạc, nhà khảo cổ nón cối, dấu X đỏ phủ định...)"
+                      rows={4}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500/60 rounded-lg p-2.5 text-xs text-slate-200 font-mono leading-relaxed placeholder:text-slate-600 focus:outline-none resize-y"
+                    />
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5">
+                      <span>💡 Các yêu cầu này được lưu tự động vào dự án và đưa trực tiếp vào System Prompt của AI khi tạo prompt cho từng phân cảnh.</span>
+                      <span className="font-mono">{topicRequirements.trim().length} ký tự</span>
+                    </div>
+                  </div>
+
                   {/* Core Master Rules Badge Strip */}
                   <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-900 text-[11px]">
                     <span className="text-slate-500 font-medium">Khung chuẩn bắt buộc:</span>
+                    <span className={`border px-2 py-0.5 rounded font-mono text-[10px] ${
+                      backgroundMode === 'dynamic'
+                        ? 'bg-purple-950/60 border-purple-500/40 text-purple-300'
+                        : 'bg-amber-950/60 border-amber-500/40 text-amber-300'
+                    }`}>
+                      {backgroundMode === 'dynamic' ? '✨ Bối cảnh: Động theo AI & Kịch bản' : '🔒 Bối cảnh: Fix cứng nền kem'}
+                    </span>
+                    <span className={`border px-2 py-0.5 rounded font-mono text-[10px] ${
+                      topicRequirements.trim()
+                        ? 'bg-amber-950/60 border-amber-500/40 text-amber-300'
+                        : 'bg-slate-900 border-slate-800 text-slate-400'
+                    }`}>
+                      {topicRequirements.trim()
+                        ? `🏷️ Yêu cầu chủ đề: Đã tùy biến (${topicRequirements.trim().length} ký tự)`
+                        : '🏷️ Yêu cầu chủ đề: Tự động theo phong cách'}
+                    </span>
                     <span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded text-amber-300/90 font-mono text-[10px]">
                       Hand-drawn 2D doodle cartoon, bold marker lines
                     </span>
@@ -2366,14 +2746,34 @@ export default function StoryStudioPage() {
                     {sc.text}
                   </p>
 
-                  {/* Prompt Preview (Collapsible) */}
+                  {/* Prompt Preview & Edit (Collapsible) */}
                   <details className="text-[10px] text-slate-500 group">
                     <summary className="cursor-pointer hover:text-slate-300 select-none flex items-center justify-between">
-                      <span>Xem câu Prompt đầy đủ</span>
+                      <span className="flex items-center gap-1 font-medium text-slate-400 group-hover:text-amber-300">
+                        <FileText className="w-3 h-3 text-amber-400/80" /> Xem & Sửa Prompt Cảnh
+                      </span>
                       <ChevronDown className="w-3 h-3 group-open:rotate-180 transition-transform" />
                     </summary>
-                    <div className="mt-1 p-2 bg-slate-950 rounded border border-slate-800/80 text-slate-400 font-mono text-[9px] max-h-24 overflow-y-auto">
-                      {sc.prompt}
+                    <div className="mt-1 space-y-1">
+                      <textarea
+                        value={sc.prompt || ''}
+                        onChange={e => {
+                          const val = e.target.value
+                          setCurrentProject(prev => prev && prev.scenes ? {
+                            ...prev,
+                            scenes: prev.scenes.map(s => s.id === sc.id ? { ...s, prompt: val } : s)
+                          } : prev)
+                        }}
+                        onBlur={e => handleUpdateScenePrompt(sc.id, e.target.value)}
+                        placeholder="Nhập prompt tiếng Anh cho cảnh này..."
+                        rows={3}
+                        className="w-full bg-slate-950 rounded border border-slate-800 focus:border-amber-500/60 p-1.5 text-slate-300 font-mono text-[9px] leading-tight resize-y focus:outline-none"
+                        title="Bạn có thể chỉnh sửa trực tiếp câu prompt này. Khi bấm ra ngoài, hệ thống tự động lưu vào dự án."
+                      />
+                      <div className="flex items-center justify-between text-[9px] text-slate-500">
+                        <span>Tự động lưu khi sửa</span>
+                        <span className="font-mono">{(sc.prompt || '').length} ký tự</span>
+                      </div>
                     </div>
                   </details>
 
@@ -2540,7 +2940,7 @@ export default function StoryStudioPage() {
       />
 
       {/* ── Modal Xác Nhận Xóa Dự Án ─────────────────────────────── */}
-      {showDeleteModal && currentProject && (
+      {showDeleteModal && (currentProject || selectedProjectId) && (
         <div
           className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
           onClick={() => !isDeletingProject && setShowDeleteModal(false)}
@@ -2556,7 +2956,7 @@ export default function StoryStudioPage() {
               <div>
                 <h3 className="text-base font-semibold text-slate-100">Xác nhận xóa dự án?</h3>
                 <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                  Hành động này sẽ xóa vĩnh viễn dự án <strong className="text-amber-400">"{currentProject.title}"</strong> cùng toàn bộ ảnh doodle, kịch bản, file âm thanh và video liên quan.
+                  Hành động này sẽ xóa vĩnh viễn dự án <strong className="text-amber-400">"{projects.find(p => p.id === (currentProject?.id || selectedProjectId))?.title || currentProject?.title || 'dự án'}"</strong> cùng toàn bộ ảnh doodle, kịch bản, file âm thanh và video liên quan.
                 </p>
               </div>
             </div>

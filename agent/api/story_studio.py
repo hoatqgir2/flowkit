@@ -15,6 +15,8 @@ class CreateStoryProjectRequest(BaseModel):
     keyword: str = ""
     hero_lock: Optional[str] = None
     prompt_style: Optional[str] = "forgotten_civilizations"
+    background_mode: Optional[str] = "dynamic"
+    topic_requirements: Optional[str] = ""
 
 
 class UpdateStoryProjectRequest(BaseModel):
@@ -22,6 +24,9 @@ class UpdateStoryProjectRequest(BaseModel):
     keyword: Optional[str] = None
     hero_lock: Optional[str] = None
     prompt_style: Optional[str] = None
+    background_mode: Optional[str] = None
+    topic_requirements: Optional[str] = None
+    current_stage: Optional[int] = None
 
 
 class GenerateScriptRequest(BaseModel):
@@ -59,6 +64,11 @@ class UpdateTranscriptRequest(BaseModel):
     scenes: List[Dict[str, Any]]
 
 
+class UpdateSceneRequest(BaseModel):
+    prompt: Optional[str] = None
+    text: Optional[str] = None
+
+
 class BuildPromptsRequest(BaseModel):
     hero_lock: Optional[str] = None
     style: Optional[str] = "forgotten_civilizations"
@@ -66,6 +76,8 @@ class BuildPromptsRequest(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
+    background_mode: Optional[str] = "dynamic"
+    topic_requirements: Optional[str] = None
 
 
 class GeneratePromptsAIRequest(BaseModel):
@@ -76,6 +88,9 @@ class GeneratePromptsAIRequest(BaseModel):
     model: Optional[str] = None
     batch_size: Optional[int] = 25
     scene_id: Optional[int] = None
+    background_mode: Optional[str] = "dynamic"
+    topic_requirements: Optional[str] = None
+    script_text: Optional[str] = None
 
 
 class GenerateSceneImageRequest(BaseModel):
@@ -116,6 +131,8 @@ async def create_project(req: CreateStoryProjectRequest):
         "current_stage": 1,
         "hero_lock": req.hero_lock or ss.DEFAULT_HERO_LOCK,
         "prompt_style": req.prompt_style or "forgotten_civilizations",
+        "background_mode": req.background_mode or "dynamic",
+        "topic_requirements": req.topic_requirements or "",
         "scenes": [],
     }
     return ss.save_project(proj)
@@ -143,8 +160,14 @@ async def update_project(project_id: str, req: UpdateStoryProjectRequest):
         proj["keyword"] = req.keyword.strip()
     if req.prompt_style is not None and req.prompt_style.strip():
         proj["prompt_style"] = req.prompt_style.strip()
+    if req.background_mode is not None and req.background_mode.strip():
+        proj["background_mode"] = req.background_mode.strip()
+    if req.topic_requirements is not None:
+        proj["topic_requirements"] = req.topic_requirements.strip()
     if req.hero_lock is not None:
         proj["hero_lock"] = req.hero_lock
+    if req.current_stage is not None and req.current_stage >= 1:
+        proj["current_stage"] = req.current_stage
     return ss.save_project(proj)
 
 
@@ -152,7 +175,10 @@ async def update_project(project_id: str, req: UpdateStoryProjectRequest):
 async def delete_project(project_id: str):
     """Delete a Story Studio project."""
     proj = ss.get_project(project_id)
-    if not proj:
+    pdir = ss.STORY_STUDIO_DIR / project_id
+    index = ss.load_projects_index()
+    in_index = any(p.get("id") == project_id for p in index)
+    if not proj and not in_index and not pdir.exists():
         raise HTTPException(404, "Project not found")
     ok = ss.delete_project(project_id)
     return {"ok": ok, "id": project_id}
@@ -344,10 +370,18 @@ async def transcribe_endpoint(project_id: str, req: TranscribeRequest):
     # Automatically build 2D doodle prompts with Hero Lock & selected style
     hero_lock = proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
     prompt_style = proj.get("prompt_style") or "forgotten_civilizations"
-    scenes = ss.build_scene_prompts(scenes, hero_lock, proj.get("keyword", ""), style=prompt_style)
+    background_mode = proj.get("background_mode") or "dynamic"
+    scenes = ss.build_scene_prompts(
+        scenes,
+        hero_lock,
+        proj.get("keyword", ""),
+        style=prompt_style,
+        background_mode=background_mode,
+    )
 
     proj["scenes"] = scenes
     proj["prompt_style"] = prompt_style
+    proj["background_mode"] = background_mode
     proj["current_stage"] = max(proj.get("current_stage", 1), 4)
     ss.save_project(proj)
     return {"scenes": scenes, "count": len(scenes)}
@@ -363,6 +397,28 @@ async def update_transcript_endpoint(project_id: str, req: UpdateTranscriptReque
     return ss.save_project(proj)
 
 
+@router.patch("/projects/{project_id}/scenes/{scene_id}")
+@router.put("/projects/{project_id}/scenes/{scene_id}")
+async def update_scene_endpoint(project_id: str, scene_id: int, req: UpdateSceneRequest):
+    """Update an individual scene's prompt or transcript text."""
+    proj = ss.get_project(project_id)
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    scenes = proj.get("scenes", [])
+    target = next((s for s in scenes if s["id"] == scene_id), None)
+    if not target:
+        raise HTTPException(404, f"Scene #{scene_id} not found")
+
+    if req.prompt is not None:
+        target["prompt"] = req.prompt.strip()
+    if req.text is not None:
+        target["text"] = req.text.strip()
+
+    ss.save_project(proj)
+    return {"ok": True, "scene": target}
+
+
 # ── Stage 5: Scene Prompts & Image Generation ─────────────────────────
 
 
@@ -376,6 +432,9 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
     prompt_style = req.style or proj.get("prompt_style") or "forgotten_civilizations"
     hero_lock = req.hero_lock or proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
     topic = proj.get("title") or proj.get("keyword") or ""
+    background_mode = req.background_mode or proj.get("background_mode") or "dynamic"
+    topic_requirements = req.topic_requirements if req.topic_requirements is not None else proj.get("topic_requirements", "")
+    full_script = (proj.get("script_text") or "").strip()
 
     if req.use_ai:
         scenes = await ss.generate_scene_prompts_ai(
@@ -386,16 +445,33 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
             base_url=req.base_url or "",
             api_key=req.api_key or "",
             model=req.model or "",
+            background_mode=background_mode,
+            topic_requirements=topic_requirements,
+            full_script=full_script,
         )
     else:
-        scenes = ss.build_scene_prompts(proj.get("scenes", []), hero_lock, proj.get("keyword", ""), style=prompt_style)
+        scenes = ss.build_scene_prompts(
+            proj.get("scenes", []),
+            hero_lock,
+            proj.get("keyword", ""),
+            style=prompt_style,
+            background_mode=background_mode,
+            topic_requirements=topic_requirements,
+        )
 
     proj["scenes"] = scenes
     proj["hero_lock"] = hero_lock
     proj["prompt_style"] = prompt_style
+    proj["background_mode"] = background_mode
+    proj["topic_requirements"] = topic_requirements
     proj["current_stage"] = max(proj.get("current_stage", 1), 5)
     ss.save_project(proj)
-    return {"scenes": scenes, "prompt_style": prompt_style}
+    return {
+        "scenes": scenes,
+        "prompt_style": prompt_style,
+        "background_mode": background_mode,
+        "topic_requirements": topic_requirements,
+    }
 
 
 @router.post("/projects/{project_id}/generate-prompts-ai")
@@ -408,6 +484,9 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
     prompt_style = req.style or proj.get("prompt_style") or "brain_psychology"
     hero_lock = req.hero_lock or proj.get("hero_lock") or ss.DEFAULT_HERO_LOCK
     topic = proj.get("title") or proj.get("keyword") or ""
+    background_mode = req.background_mode or proj.get("background_mode") or "dynamic"
+    topic_requirements = req.topic_requirements if req.topic_requirements is not None else proj.get("topic_requirements", "")
+    full_script = (req.script_text or "").strip() or (proj.get("script_text") or "").strip()
 
     all_scenes = proj.get("scenes", [])
     if req.scene_id is not None:
@@ -415,7 +494,7 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
         if not target_scenes:
             raise HTTPException(404, f"Scene #{req.scene_id} not found")
         updated = await ss.generate_scene_prompts_ai(
-            target_scenes,
+            all_scenes,
             hero_lock=hero_lock,
             topic=topic,
             style=prompt_style,
@@ -423,13 +502,18 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
             api_key=req.api_key or "",
             model=req.model or "",
             batch_size=1,
+            background_mode=background_mode,
+            topic_requirements=topic_requirements,
+            full_script=full_script,
+            target_scene_id=req.scene_id,
         )
         if updated:
-            new_prompt = updated[0]["prompt"]
-            for s in all_scenes:
-                if s.get("id") == req.scene_id:
-                    s["prompt"] = new_prompt
-                    break
+            new_target = next((s for s in updated if s.get("id") == req.scene_id), None)
+            if new_target:
+                for s in all_scenes:
+                    if s.get("id") == req.scene_id:
+                        s["prompt"] = new_target["prompt"]
+                        break
         scenes = all_scenes
     else:
         scenes = await ss.generate_scene_prompts_ai(
@@ -441,14 +525,25 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
             api_key=req.api_key or "",
             model=req.model or "",
             batch_size=req.batch_size or 25,
+            background_mode=background_mode,
+            topic_requirements=topic_requirements,
+            full_script=full_script,
         )
 
     proj["scenes"] = scenes
     proj["hero_lock"] = hero_lock
     proj["prompt_style"] = prompt_style
+    proj["background_mode"] = background_mode
+    proj["topic_requirements"] = topic_requirements
     proj["current_stage"] = max(proj.get("current_stage", 1), 5)
     ss.save_project(proj)
-    return {"scenes": scenes, "prompt_style": prompt_style, "count": len(scenes)}
+    return {
+        "scenes": scenes,
+        "prompt_style": prompt_style,
+        "background_mode": background_mode,
+        "topic_requirements": topic_requirements,
+        "count": len(scenes),
+    }
 
 
 @router.post("/projects/{project_id}/generate-scene-image")
@@ -466,6 +561,7 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
     prompt = req.prompt or target.get("prompt")
     if not prompt:
         raise HTTPException(400, "Scene has no prompt")
+    target["prompt"] = prompt
 
     if req.flow_project_id and req.flow_project_id != proj.get("flow_project_id"):
         proj["flow_project_id"] = req.flow_project_id
