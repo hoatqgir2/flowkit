@@ -32,6 +32,8 @@ import {
   Lock,
   Tag,
   Save,
+  Link2,
+  Film,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -48,6 +50,9 @@ interface SceneItem {
   prompt?: string
   image_url?: string
   cdn_url?: string
+  media_id?: string
+  transition_type?: 'new_scene' | 'inherit_edit' | 'hold_frame' | string
+  source_scene_id?: number | null
   status?: 'pending' | 'generating' | 'completed' | 'failed'
   error?: string
   watermark_removed?: boolean
@@ -78,8 +83,10 @@ interface StoryProject {
   video_size?: number
   has_subtitles?: boolean
   prompt_style?: string
-  background_mode?: 'dynamic' | 'fixed'
+  background_mode?: 'dynamic' | 'fixed' | string
   topic_requirements?: string
+  chaining_mode?: boolean
+  ken_burns?: boolean
 }
 
 export interface PromptStyleInfo {
@@ -190,6 +197,7 @@ export default function StoryStudioPage() {
   const [imageModel, setImageModel] = useState<string>('BELUGA')
   const [promptStyle, setPromptStyle] = useState<string>('forgotten_civilizations')
   const [backgroundMode, setBackgroundMode] = useState<'dynamic' | 'fixed'>('dynamic')
+  const [chainingMode, setChainingMode] = useState<boolean>(() => localStorage.getItem('fk_story_chaining_mode') === 'true')
   const [topicRequirements, setTopicRequirements] = useState<string>('')
   const [topicSaveStatus, setTopicSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const saveTimeoutRef = useRef<any>(null)
@@ -210,6 +218,7 @@ export default function StoryStudioPage() {
 
   // Stage 6 State (Video)
   const [burnSubtitles, setBurnSubtitles] = useState<boolean>(true)
+  const [kenBurns, setKenBurns] = useState<boolean>(() => localStorage.getItem('fk_ken_burns') !== 'false')
   const [renderingVideo, setRenderingVideo] = useState<boolean>(false)
 
   // Project Rename & Delete State
@@ -300,6 +309,12 @@ export default function StoryStudioPage() {
       const effectiveBg = (proj.background_mode as 'dynamic' | 'fixed') || localBg || 'dynamic'
       setBackgroundMode(effectiveBg)
 
+      const localChaining = localStorage.getItem(`fk_chaining_mode_${id}`)
+      const effectiveChaining = proj.chaining_mode !== undefined
+        ? Boolean(proj.chaining_mode)
+        : (localChaining !== null ? localChaining === 'true' : false)
+      setChainingMode(effectiveChaining)
+
       const localTopic = localStorage.getItem(`fk_topic_reqs_${id}`)
       const effectiveTopic = (proj.topic_requirements !== undefined && proj.topic_requirements !== null && proj.topic_requirements !== '')
         ? proj.topic_requirements
@@ -311,6 +326,7 @@ export default function StoryStudioPage() {
         localStorage.setItem(`fk_topic_reqs_${id}`, effectiveTopic)
       }
       localStorage.setItem(`fk_bg_mode_${id}`, effectiveBg)
+      localStorage.setItem(`fk_chaining_mode_${id}`, String(effectiveChaining))
 
       if (proj.flow_project_id) {
         setFlowProjectId(proj.flow_project_id)
@@ -318,6 +334,9 @@ export default function StoryStudioPage() {
       }
       setTopic(proj.keyword || '')
       setScriptText(proj.script_text || '')
+      if (proj.ken_burns !== undefined) {
+        setKenBurns(Boolean(proj.ken_burns))
+      }
       setActiveStage(proj.current_stage || 1)
       setStatusMsg(null)
     } catch (e: any) {
@@ -830,6 +849,25 @@ export default function StoryStudioPage() {
     handleSaveTopicConfig(undefined, mode, undefined, false)
   }
 
+  const handleSelectChainingMode = (enabled: boolean) => {
+    setChainingMode(enabled)
+    localStorage.setItem('fk_story_chaining_mode', String(enabled))
+    if (currentProject) {
+      localStorage.setItem(`fk_chaining_mode_${currentProject.id}`, String(enabled))
+      fetchAPI(`/api/story-studio/projects/${currentProject.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chaining_mode: enabled }),
+      }).catch(err => console.error('Failed to save chaining_mode:', err))
+    }
+    setStatusMsg({
+      type: 'ok',
+      text: enabled
+        ? '🔗 Đã bật chế độ "Mạch phim liên kết AI" (kế thừa góc máy & liên kết nhịp thị giác)!'
+        : '⚡ Đã chuyển về chế độ "Độc lập (Hiện tại)" (mỗi cảnh sinh ảnh độc lập theo prompt riêng)!',
+    })
+  }
+
   // ── Stage 5: Scene Prompts & Images ─────────────────────────────────
   const handleBuildPrompts = async (targetStyle?: string) => {
     if (!currentProject) return
@@ -844,6 +882,7 @@ export default function StoryStudioPage() {
           style: activeStyle,
           background_mode: backgroundMode,
           topic_requirements: topicRequirements,
+          chaining_mode: chainingMode,
         }),
       })
       setCurrentProject(prev => prev ? {
@@ -852,6 +891,7 @@ export default function StoryStudioPage() {
         prompt_style: activeStyle,
         background_mode: backgroundMode,
         topic_requirements: topicRequirements,
+        chaining_mode: chainingMode,
       } : null)
       setPromptStyle(activeStyle)
       const matched = PROMPT_STYLES.find(s => s.id === activeStyle)
@@ -873,11 +913,12 @@ export default function StoryStudioPage() {
       setAiBuildingSceneId(sceneId)
     }
     const totalScenes = currentProject.scenes.length
+    const modeLabel = chainingMode ? '🔗 Mạch phim liên kết AI' : (backgroundMode === 'dynamic' ? 'Bối cảnh động' : 'Nền kem studio')
     setStatusMsg({
       type: 'ok',
       text: sceneId !== undefined
-        ? `Đang dùng AI (${aiModel}) sinh prompt bám sát kịch bản cho cảnh #${sceneId} (${backgroundMode === 'dynamic' ? 'Bối cảnh động theo AI' : 'Nền kem studio'})...`
-        : `Đang gửi toàn bộ transcript (${totalScenes} câu) vào AI (${aiModel}) để sinh prompt [${backgroundMode === 'dynamic' ? 'Bối cảnh động theo câu chuyện' : 'Nền kem studio'}] (vui lòng chờ)...`,
+        ? `Đang dùng AI (${aiModel}) sinh prompt cho cảnh #${sceneId} [${modeLabel}]...`
+        : `Đang gửi toàn bộ transcript (${totalScenes} câu) vào AI (${aiModel}) để sinh prompt [${modeLabel}] (vui lòng chờ)...`,
     })
 
     try {
@@ -895,6 +936,7 @@ export default function StoryStudioPage() {
           background_mode: backgroundMode,
           topic_requirements: topicRequirements,
           script_text: currentProject.script_text || scriptText || '',
+          chaining_mode: chainingMode,
         }),
       })
 
@@ -904,13 +946,16 @@ export default function StoryStudioPage() {
         prompt_style: activeStyle,
         background_mode: backgroundMode,
         topic_requirements: topicRequirements,
+        chaining_mode: chainingMode,
       } : null)
       setPromptStyle(activeStyle)
       setStatusMsg({
         type: 'ok',
         text: sceneId !== undefined
-          ? `✨ Đã sinh xong prompt AI cho cảnh #${sceneId} (${backgroundMode === 'dynamic' ? 'Bối cảnh động' : 'Nền kem'})!`
-          : `✨ Đã nhận đầy đủ prompt từ AI trong 1 lượt gửi và cập nhật đồng bộ cho tất cả ${res.scenes?.length || 0} timeline (${backgroundMode === 'dynamic' ? 'Bối cảnh động theo kịch bản' : 'Nền kem studio'})!`,
+          ? `✨ Đã sinh xong prompt AI cho cảnh #${sceneId} [${modeLabel}]!`
+          : chainingMode
+            ? `✨ Đã nhận mạch phim liên kết từ AI cho tất cả ${res.scenes?.length || 0} cảnh (đã phân nhóm nhịp thị giác & liên kết cảnh)!`
+            : `✨ Đã nhận đầy đủ prompt từ AI trong 1 lượt gửi và cập nhật đồng bộ cho tất cả ${res.scenes?.length || 0} timeline (${backgroundMode === 'dynamic' ? 'Bối cảnh động theo kịch bản' : 'Nền kem studio'})!`,
       })
     } catch (e: any) {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi sinh prompt bằng AI' })
@@ -922,6 +967,7 @@ export default function StoryStudioPage() {
 
   const handleGenerateSingleScene = async (sceneId: number, customPrompt?: string, timeoutSec: number = 60) => {
     if (!currentProject) return
+    const targetScene = currentProject.scenes?.find(s => s.id === sceneId)
     const controller = new AbortController()
     activeAbortControllersRef.current.set(sceneId, controller)
     const timer = setTimeout(() => controller.abort(), timeoutSec * 1000)
@@ -946,6 +992,8 @@ export default function StoryStudioPage() {
           image_model: imageModel,
           flow_project_id: flowProjectId.trim() || currentProject.flow_project_id,
           timeout_seconds: timeoutSec,
+          transition_type: targetScene?.transition_type,
+          source_scene_id: targetScene?.source_scene_id,
         }),
       })
 
@@ -957,12 +1005,18 @@ export default function StoryStudioPage() {
             ...s,
             image_url: res.image_url,
             cdn_url: res.cdn_url,
+            media_id: res.media_id || s.media_id,
             status: 'completed',
             error: undefined,
           } : s)
         }
       })
-      setStatusMsg({ type: 'ok', text: `Cảnh ${sceneId} đã tạo ảnh xong!` })
+      setStatusMsg({
+        type: 'ok',
+        text: res.hold_frame
+          ? `Cảnh ${sceneId} đã kế thừa và giữ nguyên ảnh từ cảnh #${targetScene?.source_scene_id} (~0s)!`
+          : `Cảnh ${sceneId} đã tạo ảnh xong!`
+      })
       return res
     } catch (e: any) {
       const isAbort = e.name === 'AbortError' || e.message?.toLowerCase().includes('abort')
@@ -1262,7 +1316,10 @@ export default function StoryStudioPage() {
       const res = await fetchAPI<any>(`/api/story-studio/projects/${currentProject.id}/render-video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ burn_subtitles: burnSubtitles }),
+        body: JSON.stringify({
+          burn_subtitles: burnSubtitles,
+          ken_burns: kenBurns,
+        }),
       })
       setCurrentProject(prev => prev ? {
         ...prev,
@@ -2275,6 +2332,50 @@ export default function StoryStudioPage() {
                     </div>
                   </div>
 
+                  {/* Scene Continuity & Chaining Mode Selector */}
+                  <div className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-lg flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-0.5 max-w-xl">
+                      <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                        <Film className="w-3.5 h-3.5 text-indigo-400" />
+                        Chế độ liên kết cảnh & mạch phim (Scene Continuity):
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        {chainingMode
+                          ? '🔗 AI tự động nhóm các cảnh vào "Visual Beat". Cảnh liên quan giữ nguyên góc máy & background của cảnh trước và chỉ thêm/sửa chi tiết mới (hoặc giữ nguyên ảnh ~0s), giúp mạch phim gắn kết mượt mà.'
+                          : '⚡ Mỗi cảnh sinh ảnh độc lập theo prompt riêng (giữ nguyên 100% logic cũ, không chỉnh sửa gì).'}
+                      </p>
+                    </div>
+
+                    <div className="inline-flex rounded-lg p-0.5 bg-slate-950 border border-slate-700 text-xs font-medium">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectChainingMode(false)}
+                        className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+                          !chainingMode
+                            ? 'bg-amber-600 text-white font-semibold shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                        title="Giữ nguyên cách sinh ảnh độc lập hiện tại (100% logic cũ)"
+                      >
+                        <Zap className="w-3 h-3 text-amber-200" />
+                        1. Độc lập (Hiện tại)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectChainingMode(true)}
+                        className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all ${
+                          chainingMode
+                            ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                        title="AI tự phân tích mạch phim, liên kết bối cảnh và kế thừa góc máy giữa các cảnh"
+                      >
+                        <Link2 className="w-3 h-3 text-indigo-200" />
+                        2. Mạch phim liên kết AI (Mới)
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Topic Mandatory Rules / Theme Requirements Panel */}
                   <div className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-lg space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2387,6 +2488,13 @@ export default function StoryStudioPage() {
                         : 'bg-amber-950/60 border-amber-500/40 text-amber-300'
                     }`}>
                       {backgroundMode === 'dynamic' ? '✨ Bối cảnh: Động theo AI & Kịch bản' : '🔒 Bối cảnh: Fix cứng nền kem'}
+                    </span>
+                    <span className={`border px-2 py-0.5 rounded font-mono text-[10px] ${
+                      chainingMode
+                        ? 'bg-indigo-950/60 border-indigo-500/40 text-indigo-300'
+                        : 'bg-slate-900 border-slate-800 text-slate-400'
+                    }`}>
+                      {chainingMode ? '🔗 Mạch phim: Liên kết AI' : '⚡ Mạch phim: Độc lập'}
                     </span>
                     <span className={`border px-2 py-0.5 rounded font-mono text-[10px] ${
                       topicRequirements.trim()
@@ -2657,20 +2765,49 @@ export default function StoryStudioPage() {
                       </button>
                     </div>
 
-                    <Badge
-                      variant="outline"
-                      className={`text-[9px] ${
-                        sc.status === 'completed'
-                          ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
-                          : sc.status === 'generating'
-                          ? 'border-amber-500/30 text-amber-300 bg-amber-500/10 animate-pulse'
-                          : sc.status === 'failed'
-                          ? 'border-rose-500/30 text-rose-400 bg-rose-500/10'
-                          : 'border-slate-800 text-slate-500'
-                      }`}
-                    >
-                      {sc.status || 'pending'}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      {sc.transition_type === 'hold_frame' && (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] border-amber-500/40 text-amber-300 bg-amber-950/40 font-mono"
+                          title={`Giữ nguyên ảnh từ cảnh #${sc.source_scene_id} (~0s render)`}
+                        >
+                          ⏸️ Giữ #{sc.source_scene_id}
+                        </Badge>
+                      )}
+                      {sc.transition_type === 'inherit_edit' && (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] border-indigo-500/40 text-indigo-300 bg-indigo-950/40 font-mono"
+                          title={`Kế thừa góc máy & background từ cảnh #${sc.source_scene_id}`}
+                        >
+                          🔗 Kế thừa #{sc.source_scene_id}
+                        </Badge>
+                      )}
+                      {sc.transition_type === 'new_scene' && (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] border-sky-500/40 text-sky-300 bg-sky-950/40 font-mono"
+                          title="Bối cảnh mới"
+                        >
+                          🌟 Cảnh mới
+                        </Badge>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className={`text-[9px] ${
+                          sc.status === 'completed'
+                            ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                            : sc.status === 'generating'
+                            ? 'border-amber-500/30 text-amber-300 bg-amber-500/10 animate-pulse'
+                            : sc.status === 'failed'
+                            ? 'border-rose-500/30 text-rose-400 bg-rose-500/10'
+                            : 'border-slate-800 text-slate-500'
+                        }`}
+                      >
+                        {sc.status || 'pending'}
+                      </Badge>
+                    </div>
                   </div>
 
                   {/* Scene Image Preview */}
@@ -2851,6 +2988,27 @@ export default function StoryStudioPage() {
                     checked={burnSubtitles}
                     onChange={e => setBurnSubtitles(e.target.checked)}
                     className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
+                  <div className="space-y-0.5 pr-2">
+                    <span className="text-xs text-slate-300 flex items-center gap-1.5 font-medium">
+                      <Film className="w-3.5 h-3.5 text-indigo-400" />
+                      Lia máy nhẹ (Ken Burns / Slow Zoom):
+                    </span>
+                    <p className="text-[10px] text-slate-400 leading-tight">
+                      Zoom nhẹ 3–5% mượt mà, nối tiếp camera cho các cảnh giữ ảnh (Hold Frame).
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={kenBurns}
+                    onChange={e => {
+                      setKenBurns(e.target.checked)
+                      localStorage.setItem('fk_ken_burns', String(e.target.checked))
+                    }}
+                    className="w-4 h-4 accent-indigo-500 rounded cursor-pointer shrink-0"
                   />
                 </div>
 

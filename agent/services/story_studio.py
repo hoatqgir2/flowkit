@@ -1364,6 +1364,67 @@ def _parse_llm_json_actions(content: str) -> Dict[int, str]:
     return actions
 
 
+def _extract_chained_actions_json(content: str) -> Dict[int, Dict[str, Any]]:
+    """Extract {id: {'action': str, 'transition_type': str, 'source_scene_id': int | None}} from LLM output."""
+    results: Dict[int, Dict[str, Any]] = {}
+    if not content:
+        return results
+
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+    def process_items(items):
+        for it in items:
+            if isinstance(it, dict) and "id" in it and "action" in it:
+                sid = int(it["id"])
+                ttype = str(it.get("transition_type", "new_scene")).strip().lower()
+                if ttype not in ("new_scene", "inherit_edit", "hold_frame"):
+                    ttype = "new_scene"
+                src_id = it.get("source_scene_id")
+                if src_id is not None:
+                    try:
+                        src_id = int(src_id)
+                    except (ValueError, TypeError):
+                        src_id = None
+                results[sid] = {
+                    "action": str(it["action"]).strip(),
+                    "transition_type": ttype,
+                    "source_scene_id": src_id,
+                }
+
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            process_items(data)
+            if results:
+                return results
+        elif isinstance(data, dict):
+            items = data.get("scenes") or data.get("actions") or []
+            if isinstance(items, list):
+                process_items(items)
+                if results:
+                    return results
+    except Exception:
+        pass
+
+    m_arr = re.search(r"\[\s*\{.*?\}\s*\]", text, re.DOTALL)
+    if not m_arr:
+        m_arr = re.search(r"\[.*\]", text, re.DOTALL)
+    if m_arr:
+        try:
+            parsed = json.loads(m_arr.group(0))
+            if isinstance(parsed, list):
+                process_items(parsed)
+                if results:
+                    return results
+        except Exception:
+            pass
+
+    return results
+
+
 async def generate_scene_prompts_ai(
     scenes: List[Dict[str, Any]],
     hero_lock: str = "",
@@ -1377,6 +1438,7 @@ async def generate_scene_prompts_ai(
     topic_requirements: str = "",
     full_script: str = "",
     target_scene_id: Optional[int] = None,
+    chaining_mode: bool = False,
 ) -> List[Dict[str, Any]]:
     """Universal AI-driven 2D doodle storyboard generator (OpenAI-compatible / Gemini 3.8 Flash).
     
@@ -1461,6 +1523,36 @@ async def generate_scene_prompts_ai(
                 lines.append(f"[{t_str}] {txt}")
         script_content = "\n".join(lines)
 
+    if chaining_mode:
+        output_format_instruction = """4. INTELLIGENT STORY CHAINING & VISUAL CONTINUITY (MANDATORY):
+   Group consecutive scenes that share the same visual concept/moment into a cohesive "Visual Beat".
+   Do NOT jump to a completely different angle or background every 2-3 seconds unless the story topic genuinely changes.
+   For each scene, decide its transition relationship:
+   - "transition_type":
+     * "new_scene": Use ONLY when starting a completely new setting/location, or transitioning to a different place/time (e.g. from day to night, or savanna to cave).
+     * "inherit_edit": Use when continuing the SAME visual beat. The backdrop and camera stay identical; only ADD or MODIFY an element (e.g., character picks up a spear, or a labeled boulder drops, or a thought bubble/icon appears). The "action" MUST start with: "Same [environment/framing] as Scene #{source_scene_id}, [specific new action/prop/icon added]..."
+     * "hold_frame": Use when the narration continues the exact same visual statement without needing any new drawing at all.
+   - "source_scene_id": The id of the preceding scene in this beat (null for "new_scene").
+   - "action": Specific English description of the action or edit.
+
+OUTPUT FORMAT:
+Return strictly a valid JSON array of objects with keys "id", "transition_type", "source_scene_id", "action":
+[
+  {"id": 1, "transition_type": "new_scene", "source_scene_id": null, "action": "Wide shot of prehistoric savanna with lone acacia tree, stick figure standing curious"},
+  {"id": 2, "transition_type": "inherit_edit", "source_scene_id": 1, "action": "Same savanna and stick figure as Scene #1, stick figure is now kneeling and holding a primitive wooden spear"},
+  {"id": 3, "transition_type": "inherit_edit", "source_scene_id": 2, "action": "Same savanna as Scene #2, stick figure holding spear while giant boulder labeled 'SURVIVAL' drops beside him"}
+]
+"""
+    else:
+        output_format_instruction = """4. OUTPUT FORMAT:
+   - Each visual action description must be in ENGLISH (15–30 words) describing: [Subject/Character] + [Specific action & expression] + [Key props/metaphor] + [Environment].
+   - Return strictly valid JSON array of objects with keys "id" (int) and "action" (string):
+   [
+     {"id": 1, "action": "..."},
+     {"id": 2, "action": "..."}
+   ]
+"""
+
     system_prompt = f"""You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations (Kurzgesagt / MinutePhysics / AsapSCIENCE style).
 
 PRIMARY GOAL:
@@ -1494,16 +1586,11 @@ STRICT DIRECTING & VISUAL CONTINUITY RULES:
    - The visual storytelling must be 100% illustrative.
    - ONLY allow short ALL-CAPS single-word labels if explicitly specified by theme devices (e.g. 'SURVIVAL' on a boulder, 'REACTANCE', '300,000 YEARS').
 
-4. OUTPUT FORMAT:
-   - Each visual action description must be in ENGLISH (15–30 words) describing: [Subject/Character] + [Specific action & expression] + [Key props/metaphor] + [Environment].
-   - Return strictly valid JSON array of objects with keys "id" (int) and "action" (string):
-   [
-     {{"id": 1, "action": "..."}},
-     {{"id": 2, "action": "..."}}
-   ]
+{output_format_instruction}
 """
 
     actions_map: Dict[int, str] = {}
+    chained_actions_map: Dict[int, Dict[str, Any]] = {}
     input_items = [{"id": s["id"], "timestamp": s.get("timestamp_str", ""), "text": s["text"]} for s in scenes]
 
     if target_scene_id is not None:
@@ -1543,8 +1630,9 @@ STRICT DIRECTING & VISUAL CONTINUITY RULES:
             f"Here are the {len(scenes)} scenes in exact chronological order:\n"
             f"{json.dumps(input_items, ensure_ascii=False, indent=2)}\n\n"
             f"=== INSTRUCTION ===\n"
-            f"Based on your comprehension of the FULL SCRIPT above, storyboard all {len(scenes)} scenes in exact numerical order.\n"
-            f"Ensure every scene directly illustrates its narration sentence while keeping seamless visual continuity with the story arc.\n"
+            f"Based on your comprehension of the FULL SCRIPT above, storyboard all {len(scenes)} scenes in exact numerical order"
+            + (" with STORY CHAINING (detect visual beats, inherit_edit or hold_frame where appropriate).\n" if chaining_mode else ".\n")
+            + f"Ensure every scene directly illustrates its narration sentence while keeping seamless visual continuity with the story arc.\n"
             f"Return ONLY the JSON array (id 1 to {len(scenes)}):"
         )
 
@@ -1566,13 +1654,24 @@ STRICT DIRECTING & VISUAL CONTINUITY RULES:
                     },
                     stream=True,
                 )
-                parsed_actions = _parse_llm_json_actions(content)
-                if parsed_actions:
-                    actions_map.update(parsed_actions)
-                    logger.info("Successfully received %d scene actions from AI (target=%s)", len(actions_map), target_scene_id or "all")
-                    break
+                if chaining_mode:
+                    parsed_chained = _extract_chained_actions_json(content)
+                    if parsed_chained:
+                        chained_actions_map.update(parsed_chained)
+                        for sid, val in parsed_chained.items():
+                            actions_map[sid] = val["action"]
+                        logger.info("Successfully received %d chained scene actions from AI", len(chained_actions_map))
+                        break
+                    else:
+                        logger.warning("Attempt %d: Failed to parse chained JSON from AI response: %s", attempt + 1, content[:200])
                 else:
-                    logger.warning("Attempt %d: Failed to parse JSON from AI response: %s", attempt + 1, content[:200])
+                    parsed_actions = _parse_llm_json_actions(content)
+                    if parsed_actions:
+                        actions_map.update(parsed_actions)
+                        logger.info("Successfully received %d scene actions from AI (target=%s)", len(actions_map), target_scene_id or "all")
+                        break
+                    else:
+                        logger.warning("Attempt %d: Failed to parse JSON from AI response: %s", attempt + 1, content[:200])
             except Exception as e:
                 logger.warning("Attempt %d failed for prompt generation: %s", attempt + 1, e)
                 if attempt == 0:
@@ -1601,8 +1700,14 @@ STRICT DIRECTING & VISUAL CONTINUITY RULES:
                         },
                         stream=True,
                     )
-                    fill_actions = _parse_llm_json_actions(c)
-                    actions_map.update(fill_actions)
+                    if chaining_mode:
+                        fill_c = _extract_chained_actions_json(c)
+                        chained_actions_map.update(fill_c)
+                        for sid, val in fill_c.items():
+                            actions_map[sid] = val["action"]
+                    else:
+                        fill_actions = _parse_llm_json_actions(c)
+                        actions_map.update(fill_actions)
             except Exception as err:
                 logger.warning("Failed to fill missing scenes with AI: %s", err)
 
@@ -1635,12 +1740,22 @@ STRICT DIRECTING & VISUAL CONTINUITY RULES:
         else:
             full_prompt = item.get("prompt") or rule_map.get(sid, "")
 
-        enriched.append({
+        ch_meta = chained_actions_map.get(sid, {}) if chaining_mode else {}
+
+        scene_dict = {
             **item,
             "prompt": full_prompt,
             "status": item.get("status", "pending"),
             "image_url": item.get("image_url", ""),
-        })
+        }
+        if chaining_mode:
+            scene_dict["transition_type"] = ch_meta.get("transition_type") or item.get("transition_type", "new_scene")
+            scene_dict["source_scene_id"] = ch_meta.get("source_scene_id") if "source_scene_id" in ch_meta else item.get("source_scene_id", None)
+        elif "transition_type" in item:
+            scene_dict["transition_type"] = item["transition_type"]
+            scene_dict["source_scene_id"] = item.get("source_scene_id")
+
+        enriched.append(scene_dict)
 
     return enriched
 
@@ -1653,6 +1768,7 @@ async def generate_single_scene_image(
     flow_project_id: str = "",
     image_model: str = "BELUGA",
     timeout_seconds: float = 60.0,
+    base_media_id: str = "",
 ) -> Dict[str, Any]:
     """Generate image for a scene and save locally."""
     client = get_flow_client()
@@ -1673,6 +1789,7 @@ async def generate_single_scene_image(
                 aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
                 image_model=image_model,
                 count=1,
+                base_media_id=base_media_id or None,
             ),
             timeout=float(timeout_seconds or 60.0),
         )
@@ -1701,6 +1818,16 @@ async def generate_single_scene_image(
         logger.error("Failed to extract image url from Flow response: %s", res)
         raise RuntimeError(f"No image URL returned by Flow generator. Response: {first_item}")
 
+    media_id = (
+        first_item.get("name")
+        or first_item.get("image", {}).get("generatedImage", {}).get("mediaId")
+        or first_item.get("mediaId")
+    )
+    if not media_id or not re.search(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', str(media_id), re.I):
+        m = re.search(r'/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})', str(cdn_url or ""), re.I)
+        if m:
+            media_id = m.group(1)
+
     pdir = get_project_dir(project_id)
     scene_dir = pdir / "scenes"
     scene_dir.mkdir(parents=True, exist_ok=True)
@@ -1722,6 +1849,7 @@ async def generate_single_scene_image(
         "scene_id": scene_id,
         "image_url": local_url if local_path.exists() else cdn_url,
         "cdn_url": cdn_url,
+        "media_id": str(media_id) if media_id else "",
         "status": "completed",
     }
 
@@ -1908,9 +2036,55 @@ def create_srt_file(scenes: List[Dict[str, Any]], srt_path: Path) -> None:
     srt_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _build_ken_burns_filter(
+    duration: float,
+    is_hold: bool = False,
+    prev_zoom_end: float = 1.0,
+    motion_type: str = "zoom_in",
+) -> tuple[str, float]:
+    """Build smooth 24fps Ken Burns zoom/pan expression.
+    
+    Subtle 3-6% camera movement. For hold_frame scenes, continues previous
+    scene's zoom level smoothly without sudden reset jump-cuts.
+    """
+    total_frames = max(1, int(round(duration * 24)))
+
+    if is_hold and prev_zoom_end > 1.01:
+        # Continue previous scene's zoom smoothly (e.g. 1.04 -> 1.08)
+        z_start = min(1.055, prev_zoom_end)
+        z_end = min(1.09, z_start + 0.035)
+        step = (z_end - z_start) / total_frames
+        z_expr = f"min({z_start:.4f}+on*{step:.6f},{z_end:.4f})"
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = "ih/2-(ih/zoom/2)"
+        new_zoom_end = z_end
+    elif motion_type == "zoom_out":
+        # Slow zoom out (1.05 -> 1.00)
+        z_start = 1.05
+        z_end = 1.00
+        step = (z_start - z_end) / total_frames
+        z_expr = f"max({z_start:.4f}-on*{step:.6f},{z_end:.4f})"
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = "ih/2-(ih/zoom/2)"
+        new_zoom_end = 1.00
+    else:  # "zoom_in"
+        # Slow zoom in (1.00 -> 1.05)
+        z_start = 1.00
+        z_end = 1.05
+        step = (z_end - z_start) / total_frames
+        z_expr = f"min({z_start:.4f}+on*{step:.6f},{z_end:.4f})"
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = "ih/2-(ih/zoom/2)"
+        new_zoom_end = 1.05
+
+    zf = f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d=1:s=1920x1080:fps=24"
+    return zf, new_zoom_end
+
+
 async def render_final_video(
     project_id: str,
     burn_subtitles: bool = True,
+    ken_burns: bool = True,
 ) -> Dict[str, Any]:
     """Assemble all scene images and audio into a final MP4."""
     pdir = get_project_dir(project_id)
@@ -1927,82 +2101,188 @@ async def render_final_video(
         raise ValueError("Audio narration file not found. Generate or upload audio first.")
 
     # Check that scenes have local images
-    manifest_lines = ["ffconcat version 1.0"]
     for sc in scenes:
         sid = sc["id"]
         sc_img = pdir / "scenes" / f"scene_{sid:03d}.png"
         if not sc_img.exists():
-            # If scene hasn't been generated, use character ref or create placeholder
             ref_img = pdir / "character_ref.png"
             if ref_img.exists():
                 shutil.copyfile(ref_img, sc_img)
             else:
                 raise ValueError(f"Scene {sid} has not been generated and no reference image exists.")
 
-        dur = max(0.5, round(sc.get("end_s", sc.get("start_s", 0.0) + 3.0) - sc.get("start_s", 0.0), 2))
-        # In ffconcat format: file path relative or safe absolute, then duration
-        path_escaped = str(sc_img.resolve()).replace("\\", "/")
-        manifest_lines.append(f"file '{path_escaped}'")
-        manifest_lines.append(f"duration {dur}")
-
-    # FFmpeg concat requires the last file to be repeated without duration
-    last_img = pdir / "scenes" / f"scene_{scenes[-1]['id']:03d}.png"
-    manifest_lines.append(f"file '{str(last_img.resolve()).replace(chr(92), '/')}'")
-
-    manifest_path = pdir / "concat_manifest.txt"
-    manifest_path.write_text("\n".join(manifest_lines), encoding="utf-8")
-
     output_video = pdir / "final_video.mp4"
     ffmpeg = get_ffmpeg_path()
 
-    # Video filters
-    vf_filters = [
-        "scale=1920:1080:force_original_aspect_ratio=decrease",
-        "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
-        "format=yuv420p",
-    ]
-
+    srt_file = pdir / "subtitles.srt"
+    sub_filter = None
     if burn_subtitles:
-        srt_file = pdir / "subtitles.srt"
         create_srt_file(scenes, srt_file)
         srt_escaped = str(srt_file.resolve()).replace("\\", "/").replace(":", "\\:")
-        # Bold educational explainer subtitle styling
         sub_filter = (
             f"subtitles='{srt_escaped}':force_style="
             f"'FontName=Arial,FontSize=20,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2.5,Alignment=2,MarginV=45'"
         )
-        vf_filters.append(sub_filter)
 
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(manifest_path.resolve()),
-        "-i", str(audio_file.resolve()),
-        "-vf", ",".join(vf_filters),
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "22",
-        "-r", "24",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        str(output_video.resolve()),
-    ]
+    rendered_via_ken_burns = False
 
-    logger.info("Rendering video via FFmpeg: %s", " ".join(cmd))
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
+    if ken_burns:
+        try:
+            clips_dir = pdir / ".temp_clips"
+            if clips_dir.exists():
+                shutil.rmtree(clips_dir, ignore_errors=True)
+            clips_dir.mkdir(parents=True, exist_ok=True)
 
-    if proc.returncode != 0:
-        err_msg = stderr.decode("utf-8", errors="ignore")
-        logger.error("FFmpeg failed: %s", err_msg)
-        raise RuntimeError(f"FFmpeg error: {err_msg[-400:]}")
+            # Build motion parameters per scene with hold_frame camera continuity
+            prev_zoom_end = 1.0
+            clip_tasks_info = []
+            for idx, sc in enumerate(scenes):
+                dur = max(0.5, round(sc.get("end_s", sc.get("start_s", 0.0) + 3.0) - sc.get("start_s", 0.0), 2))
+                is_hold = (sc.get("transition_type") == "hold_frame")
+                motion_type = "zoom_out" if (idx % 4 == 3 and not is_hold) else "zoom_in"
+                zf, new_zoom = _build_ken_burns_filter(dur, is_hold=is_hold, prev_zoom_end=prev_zoom_end, motion_type=motion_type)
+                prev_zoom_end = new_zoom
+                clip_tasks_info.append((sc, zf, dur))
+
+            sem = asyncio.Semaphore(4)
+
+            async def _render_clip(sc_item, zoom_f, duration_s):
+                s_id = sc_item["id"]
+                img_p = pdir / "scenes" / f"scene_{s_id:03d}.png"
+                c_out = clips_dir / f"clip_{s_id:03d}.mp4"
+                cmd_clip = [
+                    ffmpeg, "-y",
+                    "-framerate", "24",
+                    "-loop", "1",
+                    "-t", str(duration_s),
+                    "-i", str(img_p.resolve()),
+                    "-vf", f"scale=2560:1440:force_original_aspect_ratio=increase,crop=2560:1440,{zoom_f},format=yuv420p",
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-crf", "20",
+                    "-r", "24",
+                    str(c_out.resolve()),
+                ]
+                async with sem:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd_clip,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        err = stderr.decode("utf-8", errors="ignore")
+                        raise RuntimeError(f"FFmpeg error on scene clip #{s_id}: {err[-200:]}")
+                return c_out
+
+            logger.info("Generating %d Ken Burns scene clips...", len(clip_tasks_info))
+            await asyncio.gather(*[_render_clip(sc, zf, dur) for sc, zf, dur in clip_tasks_info])
+
+            # Write manifest using relative paths inside clips_dir
+            manifest_lines = ["ffconcat version 1.0"]
+            for sc in scenes:
+                manifest_lines.append(f"file 'clip_{sc['id']:03d}.mp4'")
+            clips_manifest = clips_dir / "manifest.txt"
+            clips_manifest.write_text("\n".join(manifest_lines), encoding="utf-8")
+
+            # Final assembly command from clips
+            cmd_final = [
+                ffmpeg, "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(clips_manifest.resolve()),
+                "-i", str(audio_file.resolve()),
+            ]
+            if sub_filter:
+                cmd_final.extend([
+                    "-vf", sub_filter,
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "20",
+                ])
+            else:
+                cmd_final.extend(["-c:v", "copy"])
+
+            cmd_final.extend([
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-shortest",
+                str(output_video.resolve()),
+            ])
+
+            logger.info("Assembling Ken Burns video with audio: %s", " ".join(cmd_final))
+            proc_final = await asyncio.create_subprocess_exec(
+                *cmd_final,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc_final.communicate()
+            if proc_final.returncode != 0:
+                err_msg = stderr.decode("utf-8", errors="ignore")
+                logger.warning("Ken Burns concat failed (%s), falling back to static concat...", err_msg[-200:])
+            else:
+                rendered_via_ken_burns = True
+
+            # Clean up temporary clips
+            shutil.rmtree(clips_dir, ignore_errors=True)
+
+        except Exception as kb_err:
+            logger.warning("Ken Burns rendering encountered an error: %s. Falling back to static concat.", kb_err)
+
+    if not rendered_via_ken_burns:
+        # Standard static image concat manifest (fallback or when ken_burns=False)
+        manifest_lines = ["ffconcat version 1.0"]
+        for sc in scenes:
+            sid = sc["id"]
+            sc_img = pdir / "scenes" / f"scene_{sid:03d}.png"
+            dur = max(0.5, round(sc.get("end_s", sc.get("start_s", 0.0) + 3.0) - sc.get("start_s", 0.0), 2))
+            path_escaped = str(sc_img.resolve()).replace("\\", "/")
+            manifest_lines.append(f"file '{path_escaped}'")
+            manifest_lines.append(f"duration {dur}")
+
+        last_img = pdir / "scenes" / f"scene_{scenes[-1]['id']:03d}.png"
+        manifest_lines.append(f"file '{str(last_img.resolve()).replace(chr(92), '/')}'")
+
+        manifest_path = pdir / "concat_manifest.txt"
+        manifest_path.write_text("\n".join(manifest_lines), encoding="utf-8")
+
+        vf_filters = [
+            "scale=1920:1080:force_original_aspect_ratio=decrease",
+            "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
+            "format=yuv420p",
+        ]
+        if sub_filter:
+            vf_filters.append(sub_filter)
+
+        cmd = [
+            ffmpeg, "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(manifest_path.resolve()),
+            "-i", str(audio_file.resolve()),
+            "-vf", ",".join(vf_filters),
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "22",
+            "-r", "24",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest",
+            str(output_video.resolve()),
+        ]
+
+        logger.info("Rendering static video via FFmpeg: %s", " ".join(cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            err_msg = stderr.decode("utf-8", errors="ignore")
+            logger.error("FFmpeg failed: %s", err_msg)
+            raise RuntimeError(f"FFmpeg error: {err_msg[-400:]}")
 
     rel_video_url = f"/output/story_studio/{project_id}/final_video.mp4?t={int(time.time())}"
     video_size = output_video.stat().st_size if output_video.exists() else 0
@@ -2010,6 +2290,7 @@ async def render_final_video(
     proj["video_url"] = rel_video_url
     proj["video_size"] = video_size
     proj["has_subtitles"] = burn_subtitles
+    proj["ken_burns"] = ken_burns
     proj["current_stage"] = 6
     save_project(proj)
 
@@ -2017,4 +2298,5 @@ async def render_final_video(
         "video_url": rel_video_url,
         "file_size": video_size,
         "duration": proj.get("audio_duration", 0),
+        "ken_burns": ken_burns,
     }

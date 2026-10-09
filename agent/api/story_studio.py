@@ -1,5 +1,7 @@
 """FastAPI Router for Story Studio — Forgotten Civilizations & Doodle Video Studio."""
 
+import shutil
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -17,6 +19,7 @@ class CreateStoryProjectRequest(BaseModel):
     prompt_style: Optional[str] = "forgotten_civilizations"
     background_mode: Optional[str] = "dynamic"
     topic_requirements: Optional[str] = ""
+    chaining_mode: Optional[bool] = False
 
 
 class UpdateStoryProjectRequest(BaseModel):
@@ -27,6 +30,7 @@ class UpdateStoryProjectRequest(BaseModel):
     background_mode: Optional[str] = None
     topic_requirements: Optional[str] = None
     current_stage: Optional[int] = None
+    chaining_mode: Optional[bool] = None
 
 
 class GenerateScriptRequest(BaseModel):
@@ -67,6 +71,8 @@ class UpdateTranscriptRequest(BaseModel):
 class UpdateSceneRequest(BaseModel):
     prompt: Optional[str] = None
     text: Optional[str] = None
+    transition_type: Optional[str] = None
+    source_scene_id: Optional[int] = None
 
 
 class BuildPromptsRequest(BaseModel):
@@ -78,6 +84,7 @@ class BuildPromptsRequest(BaseModel):
     model: Optional[str] = None
     background_mode: Optional[str] = "dynamic"
     topic_requirements: Optional[str] = None
+    chaining_mode: Optional[bool] = False
 
 
 class GeneratePromptsAIRequest(BaseModel):
@@ -91,6 +98,7 @@ class GeneratePromptsAIRequest(BaseModel):
     background_mode: Optional[str] = "dynamic"
     topic_requirements: Optional[str] = None
     script_text: Optional[str] = None
+    chaining_mode: Optional[bool] = False
 
 
 class GenerateSceneImageRequest(BaseModel):
@@ -99,10 +107,13 @@ class GenerateSceneImageRequest(BaseModel):
     image_model: Optional[str] = "BELUGA"
     flow_project_id: Optional[str] = ""
     timeout_seconds: Optional[float] = 60.0
+    transition_type: Optional[str] = None
+    source_scene_id: Optional[int] = None
 
 
 class RenderVideoRequest(BaseModel):
     burn_subtitles: bool = True
+    ken_burns: Optional[bool] = True
 
 
 # ── Project CRUD ─────────────────────────────────────────────────────
@@ -133,6 +144,7 @@ async def create_project(req: CreateStoryProjectRequest):
         "prompt_style": req.prompt_style or "forgotten_civilizations",
         "background_mode": req.background_mode or "dynamic",
         "topic_requirements": req.topic_requirements or "",
+        "chaining_mode": bool(req.chaining_mode) if req.chaining_mode is not None else False,
         "scenes": [],
     }
     return ss.save_project(proj)
@@ -166,6 +178,8 @@ async def update_project(project_id: str, req: UpdateStoryProjectRequest):
         proj["topic_requirements"] = req.topic_requirements.strip()
     if req.hero_lock is not None:
         proj["hero_lock"] = req.hero_lock
+    if req.chaining_mode is not None:
+        proj["chaining_mode"] = bool(req.chaining_mode)
     if req.current_stage is not None and req.current_stage >= 1:
         proj["current_stage"] = req.current_stage
     return ss.save_project(proj)
@@ -414,6 +428,10 @@ async def update_scene_endpoint(project_id: str, scene_id: int, req: UpdateScene
         target["prompt"] = req.prompt.strip()
     if req.text is not None:
         target["text"] = req.text.strip()
+    if req.transition_type is not None:
+        target["transition_type"] = req.transition_type
+    if req.source_scene_id is not None:
+        target["source_scene_id"] = req.source_scene_id
 
     ss.save_project(proj)
     return {"ok": True, "scene": target}
@@ -435,6 +453,7 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
     background_mode = req.background_mode or proj.get("background_mode") or "dynamic"
     topic_requirements = req.topic_requirements if req.topic_requirements is not None else proj.get("topic_requirements", "")
     full_script = (proj.get("script_text") or "").strip()
+    chaining_mode = bool(req.chaining_mode) if req.chaining_mode is not None else bool(proj.get("chaining_mode", False))
 
     if req.use_ai:
         scenes = await ss.generate_scene_prompts_ai(
@@ -448,6 +467,7 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
             background_mode=background_mode,
             topic_requirements=topic_requirements,
             full_script=full_script,
+            chaining_mode=chaining_mode,
         )
     else:
         scenes = ss.build_scene_prompts(
@@ -464,6 +484,7 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
     proj["prompt_style"] = prompt_style
     proj["background_mode"] = background_mode
     proj["topic_requirements"] = topic_requirements
+    proj["chaining_mode"] = chaining_mode
     proj["current_stage"] = max(proj.get("current_stage", 1), 5)
     ss.save_project(proj)
     return {
@@ -471,6 +492,7 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
         "prompt_style": prompt_style,
         "background_mode": background_mode,
         "topic_requirements": topic_requirements,
+        "chaining_mode": chaining_mode,
     }
 
 
@@ -487,6 +509,7 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
     background_mode = req.background_mode or proj.get("background_mode") or "dynamic"
     topic_requirements = req.topic_requirements if req.topic_requirements is not None else proj.get("topic_requirements", "")
     full_script = (req.script_text or "").strip() or (proj.get("script_text") or "").strip()
+    chaining_mode = bool(req.chaining_mode) if req.chaining_mode is not None else bool(proj.get("chaining_mode", False))
 
     all_scenes = proj.get("scenes", [])
     if req.scene_id is not None:
@@ -506,6 +529,7 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
             topic_requirements=topic_requirements,
             full_script=full_script,
             target_scene_id=req.scene_id,
+            chaining_mode=chaining_mode,
         )
         if updated:
             new_target = next((s for s in updated if s.get("id") == req.scene_id), None)
@@ -513,6 +537,10 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
                 for s in all_scenes:
                     if s.get("id") == req.scene_id:
                         s["prompt"] = new_target["prompt"]
+                        if "transition_type" in new_target:
+                            s["transition_type"] = new_target["transition_type"]
+                        if "source_scene_id" in new_target:
+                            s["source_scene_id"] = new_target["source_scene_id"]
                         break
         scenes = all_scenes
     else:
@@ -528,6 +556,7 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
             background_mode=background_mode,
             topic_requirements=topic_requirements,
             full_script=full_script,
+            chaining_mode=chaining_mode,
         )
 
     proj["scenes"] = scenes
@@ -535,6 +564,7 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
     proj["prompt_style"] = prompt_style
     proj["background_mode"] = background_mode
     proj["topic_requirements"] = topic_requirements
+    proj["chaining_mode"] = chaining_mode
     proj["current_stage"] = max(proj.get("current_stage", 1), 5)
     ss.save_project(proj)
     return {
@@ -542,6 +572,7 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
         "prompt_style": prompt_style,
         "background_mode": background_mode,
         "topic_requirements": topic_requirements,
+        "chaining_mode": chaining_mode,
         "count": len(scenes),
     }
 
@@ -563,6 +594,47 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
         raise HTTPException(400, "Scene has no prompt")
     target["prompt"] = prompt
 
+    if req.transition_type is not None:
+        target["transition_type"] = req.transition_type
+    if req.source_scene_id is not None:
+        target["source_scene_id"] = req.source_scene_id
+
+    trans_type = target.get("transition_type")
+    src_id = target.get("source_scene_id")
+
+    # If this scene is hold_frame and we already have source scene image locally, copy directly (instant ~5ms)
+    if trans_type == "hold_frame" and src_id:
+        src_scene = next((s for s in scenes if s.get("id") == src_id), None)
+        pdir = ss.get_project_dir(project_id)
+        scene_dir = pdir / "scenes"
+        src_file = scene_dir / f"scene_{src_id:03d}.png"
+        target_file = scene_dir / f"scene_{req.scene_id:03d}.png"
+        if src_file.exists():
+            shutil.copy2(src_file, target_file)
+            local_url = f"/output/story_studio/{project_id}/scenes/scene_{req.scene_id:03d}.png?t={int(time.time())}"
+            target["image_url"] = local_url
+            target["cdn_url"] = (src_scene or {}).get("cdn_url", local_url)
+            target["media_id"] = (src_scene or {}).get("media_id", "")
+            target["status"] = "completed"
+            target["watermark_removed"] = (src_scene or {}).get("watermark_removed", False)
+            target["error"] = None
+            proj["current_stage"] = max(proj.get("current_stage", 1), 5)
+            ss.save_project(proj)
+            return {
+                "scene_id": req.scene_id,
+                "image_url": local_url,
+                "cdn_url": target["cdn_url"],
+                "media_id": target["media_id"],
+                "status": "completed",
+                "hold_frame": True,
+            }
+
+    base_media_id = ""
+    if trans_type == "inherit_edit" and src_id:
+        src_scene = next((s for s in scenes if s.get("id") == src_id), None)
+        if src_scene and src_scene.get("media_id"):
+            base_media_id = src_scene.get("media_id")
+
     if req.flow_project_id and req.flow_project_id != proj.get("flow_project_id"):
         proj["flow_project_id"] = req.flow_project_id
 
@@ -578,9 +650,11 @@ async def generate_scene_image_endpoint(project_id: str, req: GenerateSceneImage
             flow_project_id=req.flow_project_id or proj.get("flow_project_id", ""),
             image_model=req.image_model or "BELUGA",
             timeout_seconds=float(req.timeout_seconds or 60.0),
+            base_media_id=base_media_id,
         )
         target["image_url"] = res["image_url"]
         target["cdn_url"] = res["cdn_url"]
+        target["media_id"] = res.get("media_id", "")
         target["status"] = "completed"
         target["watermark_removed"] = False
         target["error"] = None
@@ -628,6 +702,7 @@ async def render_video_endpoint(project_id: str, req: RenderVideoRequest):
         res = await ss.render_final_video(
             project_id=project_id,
             burn_subtitles=req.burn_subtitles,
+            ken_burns=bool(req.ken_burns) if req.ken_burns is not None else True,
         )
         return res
     except Exception as e:
