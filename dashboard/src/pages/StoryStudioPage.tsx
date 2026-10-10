@@ -102,16 +102,16 @@ const DEFAULT_CHANNELS: ChannelItem[] = [
     },
     video_count: 3,
     prompt_templates: {
-      scene_prefix: 'minimalist doodle art style, hand-drawn black ink lines on clean white textured paper background',
-      scene_suffix_no_text: 'stick-figure aesthetic, high contrast, clean negative space, masterpiece, no colors, no text, no captions, no words, no letters',
-      scene_suffix_concept_card: 'clean 2D doodle sketch, bold ink lines, isolated object on plain white background, educational diagram style, no text, no watermark',
-      ai_director_system_prompt: 'You are an expert visual director for 2D doodle YouTube explainer videos about psychology and neuroscience.'
+      scene_prefix: 'Hand-drawn 2D doodle cartoon animation, flat solid colors, bold black hand-drawn outlines, slightly wobbly imperfect marker lines, minimalist style, ',
+      scene_suffix_no_text: ', same character design as the reference image, preserving character facial features and minimalist stick figure body, do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, no photorealism, no 3D render, no CGI, no realistic shading, 16:9 widescreen, simple educational YouTube explainer doodle style.',
+      scene_suffix_concept_card: ', centered single bold red hand-lettered keyword text on plain background only, no subtitles, no paragraphs, no extra words, no gradients, no photographic textures, 16:9 widescreen, simple educational YouTube explainer doodle style.',
+      ai_director_system_prompt: 'You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations about brain psychology, cognitive bias, and neuroscience (Kurzgesagt / MinutePhysics style). Read the transcript, ground every scene in relatable human dilemmas and brain gags, maintain character continuity, and produce concise, direct visual prompts for each scene.'
     },
     tts_preset: {
       provider: 'minimax',
       voice_id: 'male-qn-qingse',
-      speed: 1.0,
-      model: 'speech-01-turbo'
+      speed: 1.05,
+      model: 'speech-02-turbo'
     }
   },
   {
@@ -128,16 +128,16 @@ const DEFAULT_CHANNELS: ChannelItem[] = [
     },
     video_count: 3,
     prompt_templates: {
-      scene_prefix: 'minimalist doodle art style, hand-drawn black ink lines on clean white paper',
-      scene_suffix_no_text: 'stick-figure aesthetic, prehistoric and survival elements, clean negative space, no colors, no text, no captions',
-      scene_suffix_concept_card: 'clean 2D doodle sketch, ancient tool and survival artifact diagram, white background, no text',
-      ai_director_system_prompt: 'You are an expert visual director for 2D doodle YouTube explainer videos about ancient humans, prehistory, and survival.'
+      scene_prefix: 'Hand-drawn 2D doodle cartoon animation, flat solid colors, bold black hand-drawn outlines, slightly wobbly imperfect marker lines, minimalist style, ',
+      scene_suffix_no_text: ', same character design as the reference image, preserving character facial features and hair style, do not redesign the character, do not change hair color or clothes, no text, no words, no letters, no subtitles, no speech bubbles, no captions, no blank background, no photorealism, no 3D render, no CGI, no realistic shading, 16:9 widescreen, simple educational YouTube explainer doodle style.',
+      scene_suffix_concept_card: ', centered single bold red hand-lettered keyword text on plain background only, no subtitles, no paragraphs, no extra words, no gradients, no photographic textures, 16:9 widescreen, simple educational YouTube explainer doodle style.',
+      ai_director_system_prompt: 'You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations about ancient humans, prehistory, and survival (Kurzgesagt / MinutePhysics style). Read the transcript, ground every scene in prehistoric savanna environment, caves, campfires, and survival artifacts, maintain the orange spiky-haired character continuity, and produce concise, direct visual prompts for each scene.'
     },
     tts_preset: {
       provider: 'minimax',
-      voice_id: 'male-qn-jingying',
+      voice_id: 'male-qn-qingse',
       speed: 1.0,
-      model: 'speech-01-turbo'
+      model: 'speech-02-turbo'
     }
   }
 ]
@@ -438,6 +438,8 @@ export default function StoryStudioPage() {
   const [newChannelNiche, setNewChannelNiche] = useState<string>('brain_psychology')
   const [isCreatingChannel, setIsCreatingChannel] = useState<boolean>(false)
   const [isUploadingChannelChar, setIsUploadingChannelChar] = useState<boolean>(false)
+  const [channelModalStatus, setChannelModalStatus] = useState<{ type: 'ok' | 'err', text: string } | null>(null)
+  const channelFileInputRef = useRef<HTMLInputElement>(null)
 
   // Per-project Prompt Overrides State (Scene Prefix, Suffix No Text, Suffix Concept Card, AI Director System Prompt)
   const [showPromptOverrides, setShowPromptOverrides] = useState<boolean>(false)
@@ -589,6 +591,7 @@ export default function StoryStudioPage() {
       || DEFAULT_CHANNELS.find(c => c.id === targetCid) 
       || DEFAULT_CHANNELS[0]
     setChannelEditForm(JSON.parse(JSON.stringify(target)))
+    setChannelModalStatus(null)
     setShowChannelSettingsModal(true)
     try {
       const ch = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${targetCid}`)
@@ -629,6 +632,7 @@ export default function StoryStudioPage() {
     const targetId = channelEditForm?.id || activeChannelDetail?.id || selectedChannelId || 'channel_k1'
     try {
       setIsSavingChannel(true)
+      setChannelModalStatus(null)
       const res = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${targetId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -637,9 +641,10 @@ export default function StoryStudioPage() {
       setActiveChannelDetail(res)
       setChannelEditForm(JSON.parse(JSON.stringify(res)))
       await loadChannels()
-      setShowChannelSettingsModal(false)
+      setChannelModalStatus({ type: 'ok', text: `✓ Đã lưu cài đặt cho kênh "${res.name}" thành công!` })
       setStatusMsg({ type: 'ok', text: `Đã lưu cài đặt cho kênh "${res.name}"!` })
     } catch (e: any) {
+      setChannelModalStatus({ type: 'err', text: e.message || 'Lỗi khi lưu cài đặt kênh' })
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi khi lưu cài đặt kênh' })
     } finally {
       setIsSavingChannel(false)
@@ -654,32 +659,38 @@ export default function StoryStudioPage() {
     formData.append('file', file)
     try {
       setIsUploadingChannelChar(true)
+      setChannelModalStatus(null)
       const res = await fetchAPI<any>(`/api/story-studio/channels/${targetCid}/character`, {
         method: 'POST',
         body: formData,
       })
+      const charUrl = res.character_image_url || res.url
       setActiveChannelDetail(prev => prev ? {
         ...prev,
-        character_image_url: res.character_image_url,
+        character_image_url: charUrl,
         character_settings: {
           ...(prev.character_settings || {}),
-          character_image_url: res.character_image_url,
+          character_image_url: charUrl,
           hero_lock: res.hero_lock || prev.character_settings?.hero_lock,
         }
       } : null)
       setChannelEditForm((prev: any) => ({
         ...prev,
+        character_image_url: charUrl,
         character_settings: {
-          ...(prev.character_settings || {}),
-          character_image_url: res.character_image_url,
+          ...(prev?.character_settings || {}),
+          character_image_url: charUrl,
         }
       }))
       await loadChannels()
+      setChannelModalStatus({ type: 'ok', text: '✓ Đã tải ảnh nhân vật đại diện thành công!' })
       setStatusMsg({ type: 'ok', text: 'Tải ảnh nhân vật tham chiếu kênh thành công!' })
     } catch (e: any) {
+      setChannelModalStatus({ type: 'err', text: e.message || 'Lỗi tải ảnh nhân vật kênh' })
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi tải ảnh nhân vật kênh' })
     } finally {
       setIsUploadingChannelChar(false)
+      if (e.target) e.target.value = ''
     }
   }
 
@@ -794,12 +805,31 @@ export default function StoryStudioPage() {
         setKenBurns(Boolean(proj.ken_burns))
       }
 
-      // Populate prompt_config overrides
+      // Directly populate prompt_config from project or fallback directly to channel templates
       const pCfg = proj.prompt_config || {}
-      setProjectScenePrefix(pCfg.scene_prefix || '')
-      setProjectSceneSuffixNoText(pCfg.scene_suffix_no_text || '')
-      setProjectSceneSuffixConcept(pCfg.scene_suffix_concept_card || '')
-      setProjectSystemPrompt(pCfg.ai_director_system_prompt || '')
+      const ch = channels.find(c => c.id === proj.channel_id) || activeChannelDetail
+      const cPrompts = ch?.prompt_templates || {}
+
+      setProjectScenePrefix(
+        (pCfg.scene_prefix !== undefined && pCfg.scene_prefix !== '')
+          ? pCfg.scene_prefix
+          : (cPrompts.scene_prefix || '')
+      )
+      setProjectSceneSuffixNoText(
+        (pCfg.scene_suffix_no_text !== undefined && pCfg.scene_suffix_no_text !== '')
+          ? pCfg.scene_suffix_no_text
+          : (cPrompts.scene_suffix_no_text || '')
+      )
+      setProjectSceneSuffixConcept(
+        (pCfg.scene_suffix_concept_card !== undefined && pCfg.scene_suffix_concept_card !== '')
+          ? pCfg.scene_suffix_concept_card
+          : (cPrompts.scene_suffix_concept_card || '')
+      )
+      setProjectSystemPrompt(
+        (pCfg.ai_director_system_prompt !== undefined && pCfg.ai_director_system_prompt !== '')
+          ? pCfg.ai_director_system_prompt
+          : (cPrompts.ai_director_system_prompt || '')
+      )
 
       if (proj.channel_id && (!activeChannelDetail || activeChannelDetail.id !== proj.channel_id)) {
         loadChannelDetail(proj.channel_id)
@@ -836,6 +866,12 @@ export default function StoryStudioPage() {
       })
       await loadProjects(effectiveCid)
       setCurrentProject(newProj)
+      const pCfg = newProj.prompt_config || {}
+      const cPrompts = ch?.prompt_templates || {}
+      setProjectScenePrefix(pCfg.scene_prefix || cPrompts.scene_prefix || '')
+      setProjectSceneSuffixNoText(pCfg.scene_suffix_no_text || cPrompts.scene_suffix_no_text || '')
+      setProjectSceneSuffixConcept(pCfg.scene_suffix_concept_card || cPrompts.scene_suffix_concept_card || '')
+      setProjectSystemPrompt(pCfg.ai_director_system_prompt || cPrompts.ai_director_system_prompt || '')
       setActiveStage(1)
       setStatusMsg({ type: 'ok', text: `Đã tạo dự án mới cho kênh "${ch?.name || effectiveCid}"!` })
     } catch (e: any) {
@@ -3371,23 +3407,21 @@ export default function StoryStudioPage() {
                     </div>
                   </div>
 
-                  {/* Per-Project Prompt Overrides Accordion */}
+                  {/* Per-Project Prompt Templates (Inherited directly from Channel, editable for this video) */}
                   <div className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-lg space-y-3">
                     <div className="flex items-center justify-between cursor-pointer" onClick={() => setShowPromptOverrides(!showPromptOverrides)}>
                       <div className="flex items-center gap-2">
                         <Sliders className="w-3.5 h-3.5 text-amber-400" />
                         <span className="text-xs font-semibold text-slate-200">
-                          ⚙️ Tùy Biến Mẫu Prompt / Prefix / Suffix Cho Tập Này (Overrides)
+                          ⚙️ Mẫu Prompt, Tiền Tố & Hậu Tố Của Tập Này (Kế thừa từ: {activeChannelDetail?.name || 'Kênh'})
                         </span>
-                        {(projectScenePrefix || projectSceneSuffixNoText || projectSceneSuffixConcept || projectSystemPrompt) && (
-                          <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px] bg-amber-500/10">
-                            Đã Tùy Biến
-                          </Badge>
-                        )}
+                        <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px] bg-amber-500/10">
+                          Đang áp dụng cho tập này
+                        </Badge>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-slate-400">
-                          {showPromptOverrides ? 'Thu gọn' : 'Mở rộng tùy chỉnh'}
+                          {showPromptOverrides ? 'Thu gọn' : 'Xem & chỉnh sửa mẫu prompt'}
                         </span>
                         <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showPromptOverrides ? 'rotate-180' : ''}`} />
                       </div>
@@ -3396,7 +3430,7 @@ export default function StoryStudioPage() {
                     {showPromptOverrides && (
                       <div className="space-y-3 pt-2 border-t border-slate-800">
                         <p className="text-[11px] text-slate-400">
-                          Mặc định tập này sẽ nhận mẫu prompt từ <span className="text-amber-300 font-semibold">{activeChannelDetail?.name || 'Kênh'}</span>. Bạn có thể sửa trực tiếp bên dưới để chỉ áp dụng cho riêng tập này mà không ảnh hưởng toàn kênh.
+                          Các giá trị mẫu bên dưới đã được điền sẵn từ cấu hình của <span className="text-amber-300 font-semibold">{activeChannelDetail?.name || 'Kênh'}</span>. Bạn có thể sửa trực tiếp ở đây để áp dụng riêng cho tập video này mà không ảnh hưởng tới Kênh gốc.
                         </p>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -3409,7 +3443,7 @@ export default function StoryStudioPage() {
                               rows={2}
                               value={projectScenePrefix}
                               onChange={e => setProjectScenePrefix(e.target.value)}
-                              placeholder={activeChannelDetail?.prompt_templates?.scene_prefix || "Ví dụ: Hand-drawn educational 2D black whiteboard doodle..."}
+                              placeholder="Nhập tiền tố prompt cho từng cảnh..."
                               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
                             />
                           </div>
@@ -3423,7 +3457,7 @@ export default function StoryStudioPage() {
                               rows={2}
                               value={projectSceneSuffixNoText}
                               onChange={e => setProjectSceneSuffixNoText(e.target.value)}
-                              placeholder={activeChannelDetail?.prompt_templates?.scene_suffix_no_text || "Ví dụ: , same character design, no text, no words..."}
+                              placeholder="Nhập hậu tố cấm chữ, giữ nhân vật..."
                               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
                             />
                           </div>
@@ -3437,7 +3471,7 @@ export default function StoryStudioPage() {
                               rows={2}
                               value={projectSceneSuffixConcept}
                               onChange={e => setProjectSceneSuffixConcept(e.target.value)}
-                              placeholder={activeChannelDetail?.prompt_templates?.scene_suffix_concept_card || "Ví dụ: , same character design, bold red hand-drawn text..."}
+                              placeholder="Nhập hậu tố cho thẻ bài khái niệm..."
                               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
                             />
                           </div>
@@ -3451,7 +3485,7 @@ export default function StoryStudioPage() {
                               rows={2}
                               value={projectSystemPrompt}
                               onChange={e => setProjectSystemPrompt(e.target.value)}
-                              placeholder={activeChannelDetail?.prompt_templates?.ai_director_system_prompt || "Chỉ đạo phong cách cho AI khi sinh prompt..."}
+                              placeholder="Chỉ đạo phong cách cho AI khi sinh prompt..."
                               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
                             />
                           </div>
@@ -3463,8 +3497,9 @@ export default function StoryStudioPage() {
                             variant="outline"
                             onClick={handleResetPromptConfigToChannel}
                             className="text-xs border-slate-700 text-slate-400 hover:text-white"
+                            title="Lấy lại toàn bộ mẫu gốc từ cấu hình của Kênh hiện tại"
                           >
-                            <RotateCw className="w-3.5 h-3.5" /> Khôi phục theo Kênh
+                            <RotateCw className="w-3.5 h-3.5" /> Lấy Lại Mẫu Từ Kênh
                           </Button>
                           <Button
                             size="sm"
@@ -3473,7 +3508,7 @@ export default function StoryStudioPage() {
                             className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1 font-medium"
                           >
                             <Save className="w-3.5 h-3.5" />
-                            {isSavingPromptConfig ? 'Đang lưu...' : 'Lưu Tùy Biến Cho Tập Này'}
+                            {isSavingPromptConfig ? 'Đang lưu...' : 'Lưu Mẫu Cho Tập Này'}
                           </Button>
                         </div>
                       </div>
@@ -5128,9 +5163,9 @@ export default function StoryStudioPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
                     <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
-                      {channelEditForm.character_settings?.character_image_url || modalChannel.character_image_url ? (
+                      {(channelEditForm.character_settings?.character_image_url || channelEditForm.character_image_url || modalChannel.character_image_url) ? (
                         <img
-                          src={channelEditForm.character_settings?.character_image_url || modalChannel.character_image_url}
+                          src={channelEditForm.character_settings?.character_image_url || channelEditForm.character_image_url || modalChannel.character_image_url}
                           alt="Character Reference"
                           className="w-36 h-36 object-contain rounded-lg border border-amber-500/30 bg-slate-900"
                         />
@@ -5141,24 +5176,27 @@ export default function StoryStudioPage() {
                         </div>
                       )}
 
-                      <label className="cursor-pointer">
+                      <div className="flex flex-col items-center gap-1.5 w-full">
                         <Button
+                          type="button"
                           size="sm"
                           variant="outline"
                           disabled={isUploadingChannelChar}
-                          className="text-xs border-amber-500/40 text-amber-300 hover:bg-amber-950/40 gap-1.5 pointer-events-none"
+                          onClick={() => channelFileInputRef.current?.click()}
+                          className="text-xs border-amber-500/40 text-amber-300 hover:bg-amber-950/40 gap-1.5 w-full justify-center"
                         >
                           <Upload className="w-3.5 h-3.5" />
-                          {isUploadingChannelChar ? 'Đang tải...' : 'Upload Ảnh Nhân Vật'}
+                          {isUploadingChannelChar ? 'Đang tải ảnh...' : 'Upload Ảnh Nhân Vật'}
                         </Button>
                         <input
+                          ref={channelFileInputRef}
                           type="file"
                           accept="image/*"
                           onChange={handleUploadChannelCharacter}
                           disabled={isUploadingChannelChar}
                           className="hidden"
                         />
-                      </label>
+                      </div>
                     </div>
 
                     <div className="md:col-span-8 space-y-3">
@@ -5400,8 +5438,19 @@ export default function StoryStudioPage() {
 
             {/* Modal Footer */}
             <div className="flex items-center justify-between p-4 border-t border-slate-800 bg-slate-950/40">
-              <div className="text-[11px] text-slate-500">
-                Lưu lại sẽ cập nhật ngay lập tức cấu hình cho kênh này.
+              <div className="flex items-center gap-2 text-xs">
+                {channelModalStatus ? (
+                  <span className={`flex items-center gap-1.5 font-medium ${
+                    channelModalStatus.type === 'ok' ? 'text-emerald-400' : 'text-rose-400'
+                  }`}>
+                    {channelModalStatus.type === 'ok' ? <Check className="w-4 h-4 text-emerald-400" /> : <AlertCircle className="w-4 h-4 text-rose-400" />}
+                    {channelModalStatus.text}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-500">
+                    Lưu lại sẽ cập nhật ngay lập tức cấu hình cho kênh này mà không tắt modal.
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Button

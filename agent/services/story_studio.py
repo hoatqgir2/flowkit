@@ -282,8 +282,15 @@ def upload_channel_character(channel_id: str, file_bytes: bytes, filename: str =
     ts = int(time.time())
     url = f"/output/story_studio/channels/{channel_id}/character_ref.png?t={ts}"
     ch["character_settings"]["character_image_url"] = url
+    ch["character_image_url"] = url
     save_channel(ch)
-    return {"ok": True, "url": url}
+    return {
+        "ok": True,
+        "url": url,
+        "character_image_url": url,
+        "hero_lock": ch.get("character_settings", {}).get("hero_lock", ""),
+        "channel": ch,
+    }
 
 
 def ensure_default_channels_and_migration() -> List[Dict[str, Any]]:
@@ -311,7 +318,7 @@ def ensure_default_channels_and_migration() -> List[Dict[str, Any]]:
                 "scene_suffix_no_text": ", same character design as the reference image, preserving character facial features and minimalist stick figure body, do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, no photorealism, no 3D render, no CGI, no realistic shading, 16:9 widescreen, simple educational YouTube explainer doodle style.",
                 "scene_suffix_concept_card": ", centered single bold red hand-lettered keyword text on plain background only, no subtitles, no paragraphs, no extra words, no gradients, no photographic textures, 16:9 widescreen, simple educational YouTube explainer doodle style.",
                 "topic_requirements": STYLES_REGISTRY.get("brain_psychology", {}).get("default_topic_requirements", ""),
-                "ai_director_system_prompt": "",
+                "ai_director_system_prompt": "You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations about brain psychology, cognitive bias, and neuroscience (Kurzgesagt / MinutePhysics style). Read the transcript, ground every scene in relatable human dilemmas and brain gags, maintain character continuity, and produce concise, direct visual prompts for each scene.",
                 "script_system_prompt": "",
             },
             "thumbnail_templates": {
@@ -350,7 +357,7 @@ def ensure_default_channels_and_migration() -> List[Dict[str, Any]]:
                 "scene_suffix_no_text": ", same character design as the reference image, preserving character facial features and hair style, do not redesign the character, do not change hair color or clothes, no text, no words, no letters, no subtitles, no speech bubbles, no captions, no blank background, no photorealism, no 3D render, no CGI, no realistic shading, 16:9 widescreen, simple educational YouTube explainer doodle style.",
                 "scene_suffix_concept_card": ", centered single bold red hand-lettered keyword text on plain background only, no subtitles, no paragraphs, no extra words, no gradients, no photographic textures, 16:9 widescreen, simple educational YouTube explainer doodle style.",
                 "topic_requirements": STYLES_REGISTRY.get("ancient_humans", {}).get("default_topic_requirements", ""),
-                "ai_director_system_prompt": "",
+                "ai_director_system_prompt": "You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations about ancient humans, prehistory, and survival (Kurzgesagt / MinutePhysics style). Read the transcript, ground every scene in prehistoric savanna environment, caves, campfires, and survival artifacts, maintain the orange spiky-haired character continuity, and produce concise, direct visual prompts for each scene.",
                 "script_system_prompt": "",
             },
             "thumbnail_templates": {
