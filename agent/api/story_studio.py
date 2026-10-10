@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from agent.services import story_studio as ss
+from agent.services import story_shorts as sshorts
 
 router = APIRouter(prefix="/story-studio", tags=["story-studio"])
 
@@ -114,6 +115,49 @@ class GenerateSceneImageRequest(BaseModel):
 class RenderVideoRequest(BaseModel):
     burn_subtitles: bool = True
     ken_burns: Optional[bool] = True
+
+
+class GenerateYoutubeMetadataRequest(BaseModel):
+    language: Optional[str] = "en"
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    custom_instructions: Optional[str] = None
+
+
+class GenerateThumbnailRequest(BaseModel):
+    prompt: str
+    image_model: Optional[str] = "BELUGA"
+    timeout_seconds: Optional[float] = 60.0
+    flow_project_id: Optional[str] = None
+    hook_text: Optional[str] = ""
+    burn_text: Optional[bool] = False
+
+
+class BurnThumbnailTextRequest(BaseModel):
+    hook_text: Optional[str] = ""
+    position: Optional[str] = "top_left"
+    color: Optional[str] = "yellow"
+
+
+class AnalyzeShortsRequest(BaseModel):
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    custom_instructions: Optional[str] = None
+
+
+class RenderShortRequest(BaseModel):
+    short_id: str
+    layout_mode: Optional[str] = "stacked"
+    burn_subtitles: Optional[bool] = False
+    sfx_mode: Optional[str] = "none"
+
+
+class BatchRenderShortsRequest(BaseModel):
+    layout_mode: Optional[str] = "stacked"
+    burn_subtitles: Optional[bool] = False
+    sfx_mode: Optional[str] = "none"
 
 
 # ── Project CRUD ─────────────────────────────────────────────────────
@@ -692,6 +736,17 @@ async def remove_all_watermarks_endpoint(project_id: str):
         raise HTTPException(500, f"Batch watermark removal failed: {e}")
 
 
+@router.post("/projects/{project_id}/clear-images")
+async def clear_all_images_endpoint(project_id: str):
+    """Delete all generated scene image files and reset scene statuses to pending."""
+    try:
+        return ss.clear_all_scene_images(project_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Clear images failed: {e}")
+
+
 # ── Stage 6: Video Assembly ───────────────────────────────────────────
 
 
@@ -707,3 +762,152 @@ async def render_video_endpoint(project_id: str, req: RenderVideoRequest):
         return res
     except Exception as e:
         raise HTTPException(500, f"Video render failed: {e}")
+
+
+# ── Stage 7: Viral YouTube SEO & Thumbnail Kit ─────────────────────────
+
+
+@router.post("/projects/{project_id}/youtube-metadata")
+async def generate_youtube_metadata_endpoint(project_id: str, req: GenerateYoutubeMetadataRequest):
+    """Generate viral YouTube titles, description with chapters, tags, and thumbnail concepts."""
+    try:
+        return await ss.generate_youtube_metadata_ai(
+            project_id=project_id,
+            language=req.language or "vi",
+            base_url=req.base_url or "",
+            api_key=req.api_key or "",
+            model=req.model or "",
+            custom_instructions=req.custom_instructions or "",
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"YouTube metadata generation failed: {e}")
+
+
+@router.post("/projects/{project_id}/generate-thumbnail")
+async def generate_thumbnail_endpoint(project_id: str, req: GenerateThumbnailRequest):
+    """Generate YouTube thumbnail image via Google Flow with Hero Lock, watermark removal, and bold hook typography."""
+    try:
+        return await ss.generate_thumbnail_image(
+            project_id=project_id,
+            prompt=req.prompt,
+            image_model=req.image_model or "BELUGA",
+            timeout_seconds=float(req.timeout_seconds or 60.0),
+            flow_project_id=req.flow_project_id or "",
+            hook_text=req.hook_text or "",
+            burn_text=bool(req.burn_text) if req.burn_text is not None else True,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Thumbnail generation failed: {e}")
+
+
+@router.post("/projects/{project_id}/remove-thumbnail-watermark")
+async def remove_thumbnail_watermark_endpoint(project_id: str):
+    """Remove watermark from the project's generated thumbnail image file."""
+    try:
+        return ss.remove_thumbnail_watermark(project_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Watermark removal failed: {e}")
+
+
+@router.post("/projects/{project_id}/burn-thumbnail-text")
+async def burn_thumbnail_text_endpoint(project_id: str, req: BurnThumbnailTextRequest):
+    """Overlay large bold hook typography onto project thumbnail image."""
+    try:
+        return ss.burn_thumbnail_text(
+            project_id=project_id,
+            text=req.hook_text or "",
+            position=req.position or "top_left",
+            color=req.color or "yellow",
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Burn text failed: {e}")
+
+
+# ── Stage 8: Auto AI Shorts Extractor (Voice + SFX) ───────────────────
+
+
+@router.post("/projects/{project_id}/shorts/analyze")
+async def analyze_shorts_endpoint(project_id: str, req: AnalyzeShortsRequest):
+    """Scan project transcript and scenes to identify 2-4 viral short candidates."""
+    try:
+        candidates = await sshorts.analyze_shorts_candidates_ai(
+            project_id=project_id,
+            base_url=req.base_url or "",
+            api_key=req.api_key or "",
+            model=req.model or "",
+            custom_instructions=req.custom_instructions or "",
+        )
+        return {"candidates": candidates}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Shorts analysis failed: {e}")
+
+
+@router.post("/projects/{project_id}/shorts/render")
+async def render_short_endpoint(project_id: str, req: RenderShortRequest):
+    """Render a single 9:16 short with Clean Voice-Only (or optional soft ding) and Stacked layout."""
+    try:
+        res = await sshorts.render_single_short(
+            project_id=project_id,
+            short_id=req.short_id,
+            layout_mode=req.layout_mode or "stacked",
+            burn_subtitles=bool(req.burn_subtitles) if req.burn_subtitles is not None else False,
+            sfx_mode=req.sfx_mode or "none",
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Render short failed: {e}")
+
+
+@router.post("/projects/{project_id}/shorts/batch-render")
+async def batch_render_shorts_endpoint(project_id: str, req: BatchRenderShortsRequest):
+    """Batch render all available short candidates for a project."""
+    try:
+        results = await sshorts.batch_render_all_shorts(
+            project_id=project_id,
+            layout_mode=req.layout_mode or "stacked",
+            burn_subtitles=bool(req.burn_subtitles) if req.burn_subtitles is not None else False,
+            sfx_mode=req.sfx_mode or "none",
+        )
+        return {"shorts": results}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Batch render shorts failed: {e}")
+
+
+@router.get("/projects/{project_id}/shorts")
+async def get_project_shorts_endpoint(project_id: str):
+    """Get all candidates and rendered shorts for a project."""
+    proj = ss.get_project(project_id)
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    return {
+        "candidates": proj.get("shorts_candidates", []),
+        "shorts": proj.get("shorts", []),
+    }
+
+
+@router.delete("/projects/{project_id}/shorts/{short_id}")
+async def delete_project_short_endpoint(project_id: str, short_id: str):
+    """Delete a rendered short file and record."""
+    success = sshorts.delete_project_short(project_id, short_id)
+    if not success:
+        raise HTTPException(404, "Short not found or project missing")
+    return {"status": "deleted", "short_id": short_id}
+
+
+

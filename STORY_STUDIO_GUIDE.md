@@ -88,6 +88,12 @@ tham chiếu    LLM theo      Audio        Transcript    Doodle 2D     FFmpeg + 
   - **Tâm Lý Học Não Bộ & Lời Khuyên (`brain_psychology` - "Why your brain ignores good advice"):** Tâm lý học nhận thức, thiên kiến và hành vi. Nhân vật que tối giản đầu tròn minh họa hành động đời thường, bịt tai phớt lờ loa phóng thanh, đẩy lùi thùng gỗ phản kháng, xây tường gạch cái tôi cố thủ, bẫy dopamine lướt điện thoại ban đêm, bản năng sinh tồn xavan thời tiền sử, ngã rẽ lựa chọn và thẻ định nghĩa tâm lý chữ đỏ tối giản (không spam hình não hồng).
   - **Giải nghĩa nhanh tiếng Việt trực quan:** Giao diện có khung giải thích chi tiết ý nghĩa và các chi tiết nhận diện của từng phong cách khi chọn.
   - **Nút Tái Tạo Nhanh (Mẫu):** Tự động sinh prompt theo bộ quy tắc mẫu mà không cần gọi AI.
+- **Mạch Phim Liên Kết AI (Intelligent Story Chaining & Director Engine):**
+  - **Khóa nhịp thời lượng (Duration-Aware Pacing):** Đọc thời lượng `duration_s` từng dòng từ Whisper. Các câu thoại ngắn `< 2.0s` được AI ưu tiên gắn `hold_frame` (giữ nguyên ảnh ~0s render) hoặc `inherit_edit` thêm 1 biểu tượng phản ứng nhỏ (`?`, `!`, gạch chéo `X`), tuyệt đối không cắt cảnh đột ngột gây chớp giật thị giác.
+  - **Khóa hành trang & Đạo cụ (Prop & Inventory Persistence):** Khi nhân vật cầm ngọn giáo, ngọn đuốc, tay chèo, đèn bão hay điện thoại ở cảnh trước, các cảnh `inherit_edit` tiếp theo tự động duy trì vật dụng trên tay, không bị biến mất vô lý.
+  - **Làm mượt bước chuyển tư thế (Kinetic & Pose Continuity):** Tránh hiện tượng nhảy tư thế giật cục; AI chỉ đạo diễn xuất chuyển tiếp tự nhiên (từ quỳ đứng dậy, từ cúi đầu nhìn sang phải).
+  - **Nhận diện thủ pháp đối lập (Contrast & Juxtaposition):** Với các câu kịch bản so sánh ảo tưởng vs thực tế (*"Bạn nghĩ là... nhưng sự thật là..."*), AI tự động chỉ định bố cục chia đôi (Split-screen) hoặc dấu gạch chéo đỏ `X` phủ định.
+  - **Kỹ thuật Delta Prompting cho Google Flow:** Với cảnh `inherit_edit`, AI viết prompt theo công thức: *"Same [setting/framing] as Scene #{source_scene_id}, preserving the exact background plate and camera angle. ONLY modify: [chi tiết thay đổi động]"*, giúp Google Flow giữ nguyên 100% bối cảnh nền và chỉ biến đổi chi tiết cần sửa.
 - **Tạo prompt theo chuẩn Rule 2:**
   - Chỉ mô tả **hành động & bối cảnh** (ngồi làm việc với laptop, đứng chèo thuyền, đi chợ, săn thú, thảo nguyên savanna...).
   - Tuyệt đối không mô tả màu tóc/quần áo xung đột với ảnh tham chiếu.
@@ -96,6 +102,7 @@ tham chiếu    LLM theo      Audio        Transcript    Doodle 2D     FFmpeg + 
   - Khi tài khoản 1 hết quota (limit), mở Chrome sang tài khoản 2, nhập `Flow Project ID của Acc mới`.
   - Bấm **`🔄 Đồng Bộ Tham Chiếu Sang Acc Mới`**: Hệ thống tự động re-upload file ảnh gốc trên máy sang tài khoản 2 và nhận UUID mới.
   - Bấm **`⚡ Tạo Tiếp Ảnh Còn Thiếu`**: Hệ thống bỏ qua các cảnh đã có ảnh (đã lưu an toàn trên ổ đĩa), chỉ gửi request tạo tiếp các cảnh còn thiếu theo cấu hình batch đã đặt.
+- **Nút Xóa Hết Ảnh (Clear All Scene Images):** Nút màu đỏ viền hoa hồng cạnh nút Xóa Watermark. Cho phép xóa vĩnh viễn toàn bộ file ảnh `.png` trong thư mục `scenes/` trên ổ đĩa và reset trạng thái của tất cả các cảnh về `pending`, đồng thời **bảo tồn 100% kịch bản, câu prompt, timeline và cấu trúc liên kết**, giúp người dùng dễ dàng tạo lại toàn bộ ảnh từ đầu với cấu hình hoặc tài khoản mới.
 - **Preview:** Lưới ảnh từng cảnh, có nút xem phóng to (Lightbox), kiểm tra câu prompt đầy đủ và nút sinh lại (Regenerate) riêng lẻ từng cảnh.
 
 ### Bước 6: Ghép Video Thành Phẩm (FFmpeg Assembly)
@@ -103,6 +110,26 @@ tham chiếu    LLM theo      Audio        Transcript    Doodle 2D     FFmpeg + 
 - **Ghép âm thanh:** Trộn file audio lồng tiếng ở Bước 3.
 - **Khắc phụ đề (Burn Subtitles):** Tự động sinh `subtitles.srt` và khắc chữ trắng viền đen rõ nét theo phong cách YouTube Explainer.
 - **Preview:** Trình phát video MP4 trực tiếp trên Dashboard và nút tải file về máy.
+
+### Bước 7: Bộ Xuất Bản YouTube Viral (Viral Kit: Tiêu Đề, Mô Tả & Thumbnail 16:9)
+- **100% Chuẩn Tiếng Anh (English Only):** Tối ưu thuật toán YouTube toàn cầu và đối tượng khán giả quốc tế theo chuẩn Kurzgesagt, MinutePhysics, Veritasium:
+  - **5 Công Thức Tiêu Đề Hook Viral (< 65 ký tự):** Question Hook, Shocking Statement, Paradox/Contradiction, Secret/Revelation, Numbers & Stakes.
+  - **Mô Tả 3-Zone Chuẩn Explainer:** Zone 1 (Hook Above the Fold), Zone 2 (Story Deep-dive & Timeline Chapters tự động theo `mm:ss`), Zone 3 (SEO Footer + Hashtags + Animation Credits).
+  - **Bộ Thẻ Tags SEO:** 15-20 từ khóa tiếng Anh search volume cao.
+  - **4 Concept Thumbnail 2D Doodle:** Cung cấp 4 biến thể (Biểu cảm sốc, Split-screen đối lập, Nghịch lý thời gian, Cơ chế sinh học...) kèm câu Hook ngắn tương phản cao (`THEY DID WHAT?!`, `NO PILLS?`).
+- **Trình Sinh Thumbnail 16:9 Với Hero Lock:** Bấm **`🎨 Tạo Thumbnail Này`** để gửi prompt sang Google Flow, tự động khóa nhân vật chính từ ảnh tham chiếu.
+- **Nút Xóa Watermark Thumbnail (Remove Gemini Watermark):** Nút **`Xóa Watermark`** với icon Eraser tích hợp sẵn trên khung Thumbnail. Cho phép xóa sạch logo ngôi sao 4 cánh của Gemini ở góc dưới bên phải bằng thuật toán Reverse Alpha Blending mà không làm nhòe hay mờ ảnh, hỗ trợ tải file `.png` sạch 100%.
+
+### Bước 8: Tách Shorts Tự Động Bằng AI (AI Shorts Studio — Chuẩn 50–60s)
+- **Tự Động Sinh Tiêu Đề & Mô Tả Chuẩn SEO (Metadata Viral):** Khi AI phân tích các đoạn Shorts, hệ thống tự động sinh:
+  - *Tiêu đề (Title):* Giật tít, hấp dẫn, chuẩn SEO có hashtag & emoji (kèm nút copy 1-click).
+  - *Mô tả (Description):* 2–4 câu tóm tắt nội dung kịch tính, lời kêu gọi hành động (CTA) đón xem video dài và danh sách hashtag thịnh hành (kèm nút copy 1-click).
+  - *Hashtags:* Trích xuất 4–6 thẻ tag chuẩn mực (kèm nút copy toàn bộ tags).
+- **Thời Lượng Vàng 50–60 Giây:** Tối ưu hóa thuật toán giữ chân người xem (audience retention) và kiếm tiền trên YouTube Shorts / TikTok / Reels.
+- **Bố Cục 9:16 Sạch 100% & Chuẩn Màu Universal `yuv420p`:**
+  - *Bố cục Stacked Explainer:* Khung nền mờ 1080x1920 với ảnh doodle 16:9 sắc nét ở giữa. Đã gỡ bỏ toàn bộ text hook đè lên hình để video sạch đẹp 100%, thuận tiện cho người dùng tự chèn chữ tùy ý trên CapCut/TikTok.
+  - *Chuẩn màu `yuv420p` + `faststart`:* Tương thích tuyệt đối trên mọi trình phát máy tính (Windows Media Player, VLC, Photos, QuickTime) và phần mềm dựng phim, giải quyết triệt để lỗi video bị đen xì khi tải về.
+- **Giọng Đọc Sạch 100% (Clean Voice-Only):** Loại bỏ tạp âm chuyển cảnh rẹt rẹt / whoosh, giữ giọng lồng tiếng Minimax trong trẻo nguyên bản.
 
 ---
 
@@ -122,9 +149,10 @@ tham chiếu    LLM theo      Audio        Transcript    Doodle 2D     FFmpeg + 
 
 ## 4. Các file mã nguồn chính
 
-- **Backend Service:** `agent/services/story_studio.py` (logic 6 bước, Minimax API, FFmpeg).
-- **Backend API Router:** `agent/api/story_studio.py` (14 REST endpoints).
-- **Frontend Page:** `dashboard/src/pages/StoryStudioPage.tsx` (Giao diện 6 bước với stepper và previews).
+- **Backend Shorts Service:** `agent/services/story_shorts.py` (Khai phá ứng viên Shorts bằng AI, tổng hợp SFX Ding/Whoosh, dựng bố cục dọc 9:16).
+- **Backend Service:** `agent/services/story_studio.py` (logic các bước, Minimax API, FFmpeg).
+- **Backend API Router:** `agent/api/story_studio.py` (19 REST endpoints).
+- **Frontend Page:** `dashboard/src/pages/StoryStudioPage.tsx` (Giao diện tích hợp AI Shorts Studio).
 - **Frontend HTTP Client:** `dashboard/src/api/client.ts` (Sửa lỗi FormData).
 - **App Shell & Routing:** `dashboard/src/App.tsx` & `dashboard/src/i18n/translations.ts`.
 - **Chrome Extension:** `extension/background.js` (`v0.5.3` đa tài khoản `/u/2/`).

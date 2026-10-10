@@ -1527,20 +1527,29 @@ async def generate_scene_prompts_ai(
         output_format_instruction = """4. INTELLIGENT STORY CHAINING & VISUAL CONTINUITY (MANDATORY):
    Group consecutive scenes that share the same visual concept/moment into a cohesive "Visual Beat".
    Do NOT jump to a completely different angle or background every 2-3 seconds unless the story topic genuinely changes.
-   For each scene, decide its transition relationship:
+
+   RULES FOR TRANSITIONS & CINEMATOGRAPHY:
    - "transition_type":
-     * "new_scene": Use ONLY when starting a completely new setting/location, or transitioning to a different place/time (e.g. from day to night, or savanna to cave).
-     * "inherit_edit": Use when continuing the SAME visual beat. The backdrop and camera stay identical; only ADD or MODIFY an element (e.g., character picks up a spear, or a labeled boulder drops, or a thought bubble/icon appears). The "action" MUST start with: "Same [environment/framing] as Scene #{source_scene_id}, [specific new action/prop/icon added]..."
-     * "hold_frame": Use when the narration continues the exact same visual statement without needing any new drawing at all.
+     * "new_scene": Use ONLY when starting a completely new setting/location, or transitioning to a different place/time (e.g. from day to night, or savanna to cave). Set "source_scene_id": null.
+     * "inherit_edit": Use when continuing the SAME visual beat. The background plate and camera stay identical; only ADD or MODIFY an element, character action, or prop. The "action" MUST strictly start with:
+       "Same [environment/framing] as Scene #{source_scene_id}, preserving the exact background plate and camera angle. ONLY modify: [specific character action / new held prop / new visual icon]..."
+     * "hold_frame": Use when the narration continues the exact same visual statement or when the line is a short pause/reinforcement (< 2.0s) without needing any new drawing at all. Set "source_scene_id": [id of preceding scene].
    - "source_scene_id": The id of the preceding scene in this beat (null for "new_scene").
    - "action": Specific English description of the action or edit.
+
+   DIRECTOR CONTINUITY RULES (CRITICAL):
+   - RULE A (DURATION-AWARE PACING): Check "duration_s" for each scene. For very short lines (duration_s <= 2.0s), STRONGLY prefer "hold_frame" or "inherit_edit" with a subtle, quick visual reaction (e.g., small question mark icon, red 'X', or alert expression). NEVER start a "new_scene" for lines under 2.0s unless it is an extreme dramatic smash cut!
+   - RULE B (PROP & INVENTORY PERSISTENCE): If the character picks up or holds a key prop (e.g. wooden spear, oar/paddle, glowing lantern, torch, stone axe, pottery jar, smartphone, book) in a scene, ANY subsequent "inherit_edit" scene in that beat MUST KEEP that prop in hand/use unless the narration explicitly describes dropping or stowing it. Do not let objects magically disappear!
+   - RULE C (KINETIC & POSE CONTINUITY): When continuing in "inherit_edit", smoothly transition the character's pose. If they were kneeling in the source scene, describe them rising from kneeling or shifting posture; do not teleport poses abruptly.
+   - RULE D (NARRATIVE TROPES & CONTRAST): If the line presents a contrast ("While kings build palaces, ordinary people live in mud huts" or "You think it's willpower, but it's ancient biology"): Use a split-screen layout ("Split-screen doodle: on the left side, [myth/palace] crossed out with bold red hand-drawn X; on the right side, [reality] with [hero_anchor]...") or sequential negation (first frame shows myth, next inherit_edit frame slashes it with red X).
 
 OUTPUT FORMAT:
 Return strictly a valid JSON array of objects with keys "id", "transition_type", "source_scene_id", "action":
 [
-  {"id": 1, "transition_type": "new_scene", "source_scene_id": null, "action": "Wide shot of prehistoric savanna with lone acacia tree, stick figure standing curious"},
-  {"id": 2, "transition_type": "inherit_edit", "source_scene_id": 1, "action": "Same savanna and stick figure as Scene #1, stick figure is now kneeling and holding a primitive wooden spear"},
-  {"id": 3, "transition_type": "inherit_edit", "source_scene_id": 2, "action": "Same savanna as Scene #2, stick figure holding spear while giant boulder labeled 'SURVIVAL' drops beside him"}
+  {"id": 1, "transition_type": "new_scene", "source_scene_id": null, "action": "Wide shot of prehistoric savanna with lone acacia tree under dawn sky, stick figure standing curious"},
+  {"id": 2, "transition_type": "inherit_edit", "source_scene_id": 1, "action": "Same savanna and stick figure as Scene #1, preserving the exact background plate and camera angle. ONLY modify: stick figure is now kneeling and carving a sharp tip on a wooden spear"},
+  {"id": 3, "transition_type": "inherit_edit", "source_scene_id": 2, "action": "Same savanna as Scene #2, preserving the exact background plate and camera angle. ONLY modify: stick figure rises from kneeling pose, gripping the carved spear defensively while giant boulder labeled 'SURVIVAL' drops beside him"},
+  {"id": 4, "transition_type": "hold_frame", "source_scene_id": 3, "action": "Hold frame from Scene #3"}
 ]
 """
     else:
@@ -1591,7 +1600,15 @@ STRICT DIRECTING & VISUAL CONTINUITY RULES:
 
     actions_map: Dict[int, str] = {}
     chained_actions_map: Dict[int, Dict[str, Any]] = {}
-    input_items = [{"id": s["id"], "timestamp": s.get("timestamp_str", ""), "text": s["text"]} for s in scenes]
+    input_items = [
+        {
+            "id": s["id"],
+            "timestamp": s.get("timestamp_str", ""),
+            "duration_s": round(float(s.get("duration", (s.get("end_s", 0) - s.get("start_s", 0)) if (s.get("end_s") is not None and s.get("start_s") is not None and s.get("end_s") > s.get("start_s")) else 3.0)), 1),
+            "text": s["text"],
+        }
+        for s in scenes
+    ]
 
     if target_scene_id is not None:
         target_item = next((s for s in scenes if s["id"] == target_scene_id), None) or scenes[0]
@@ -1599,39 +1616,62 @@ STRICT DIRECTING & VISUAL CONTINUITY RULES:
         next_scenes = [s for s in scenes if s["id"] > target_item["id"]][:3]
         timeline_context = []
         for ps in prev_scenes:
-            timeline_context.append(f"Scene #{ps['id']} [{ps.get('timestamp_str', '')}]: \"{ps.get('text', '')}\"")
-        timeline_context.append(f">>> [CURRENT TARGET SCENE #{target_item['id']}]: \"{target_item.get('text', '')}\" <<<")
+            dur_p = ps.get("duration", 3.0)
+            ttype_p = ps.get("transition_type", "new_scene")
+            timeline_context.append(f"Scene #{ps['id']} [{ps.get('timestamp_str', '')}] ({dur_p}s) [{ttype_p}]: \"{ps.get('text', '')}\" -> Action: {ps.get('prompt', '')[:120]}")
+        cur_dur = round(float(target_item.get("duration", 3.0)), 1)
+        timeline_context.append(f">>> [CURRENT TARGET SCENE #{target_item['id']}] ({cur_dur}s): \"{target_item.get('text', '')}\" <<<")
         for ns in next_scenes:
-            timeline_context.append(f"Scene #{ns['id']} [{ns.get('timestamp_str', '')}]: \"{ns.get('text', '')}\"")
+            dur_n = ns.get("duration", 3.0)
+            timeline_context.append(f"Scene #{ns['id']} [{ns.get('timestamp_str', '')}] ({dur_n}s): \"{ns.get('text', '')}\"")
 
-        user_prompt = (
-            f"=== 1. STORY TOPIC & CORE CONCEPT ===\n"
-            f"{topic or 'Educational Story Explainer'}\n\n"
-            f"=== 2. FULL ORIGINAL SCRIPT (FULL CONTEXT - READ & COMPREHEND FIRST) ===\n"
-            f"{script_content}\n\n"
-            f"=== 3. SURROUNDING TIMELINE CONTEXT ===\n"
-            f"{chr(10).join(timeline_context)}\n\n"
-            f"=== INSTRUCTION ===\n"
-            f"Generate a rich, cohesive visual action description specifically for TARGET SCENE #{target_item['id']}.\n"
-            f"Sentence to illustrate: \"{target_item.get('text', '')}\"\n"
-            f"Make sure this scene visual directly represents that sentence and fits seamlessly with the surrounding scenes in the story world.\n"
-            f"Return ONLY a JSON array with this single object:\n"
-            f"[\n"
-            f"  {{\"id\": {target_item['id']}, \"action\": \"...\"}}\n"
-            f"]"
-        )
+        if chaining_mode:
+            sample_obj = f'{{"id": {target_item["id"]}, "transition_type": "new_scene|inherit_edit|hold_frame", "source_scene_id": {target_item["id"] - 1 if target_item["id"] > 1 else "null"}, "action": "..."}}'
+            user_prompt = (
+                f"=== 1. STORY TOPIC & CORE CONCEPT ===\n"
+                f"{topic or 'Educational Story Explainer'}\n\n"
+                f"=== 2. FULL ORIGINAL SCRIPT (FULL CONTEXT - READ & COMPREHEND FIRST) ===\n"
+                f"{script_content}\n\n"
+                f"=== 3. SURROUNDING TIMELINE CONTEXT ===\n"
+                f"{chr(10).join(timeline_context)}\n\n"
+                f"=== INSTRUCTION ===\n"
+                f"Generate a rich, cohesive visual action description specifically for TARGET SCENE #{target_item['id']} with STORY CHAINING.\n"
+                f"Sentence to illustrate: \"{target_item.get('text', '')}\" (duration: {cur_dur}s)\n"
+                f"Evaluate if this scene should be 'new_scene', 'inherit_edit', or 'hold_frame' relative to preceding scenes, respecting prop/pose continuity, duration-aware pacing, and delta prompting.\n"
+                f"Return ONLY a JSON array with this single object:\n"
+                f"[\n"
+                f"  {sample_obj}\n"
+                f"]"
+            )
+        else:
+            user_prompt = (
+                f"=== 1. STORY TOPIC & CORE CONCEPT ===\n"
+                f"{topic or 'Educational Story Explainer'}\n\n"
+                f"=== 2. FULL ORIGINAL SCRIPT (FULL CONTEXT - READ & COMPREHEND FIRST) ===\n"
+                f"{script_content}\n\n"
+                f"=== 3. SURROUNDING TIMELINE CONTEXT ===\n"
+                f"{chr(10).join(timeline_context)}\n\n"
+                f"=== INSTRUCTION ===\n"
+                f"Generate a rich, cohesive visual action description specifically for TARGET SCENE #{target_item['id']}.\n"
+                f"Sentence to illustrate: \"{target_item.get('text', '')}\"\n"
+                f"Make sure this scene visual directly represents that sentence and fits seamlessly with the surrounding scenes in the story world.\n"
+                f"Return ONLY a JSON array with this single object:\n"
+                f"[\n"
+                f"  {{\"id\": {target_item['id']}, \"action\": \"...\"}}\n"
+                f"]"
+            )
     else:
         user_prompt = (
             f"=== 1. STORY TOPIC & CORE CONCEPT ===\n"
             f"{topic or 'Educational Story Explainer'}\n\n"
             f"=== 2. FULL ORIGINAL SCRIPT (READ & DIGEST THIS ENTIRE NARRATIVE FIRST) ===\n"
             f"{script_content}\n\n"
-            f"=== 3. CHRONOLOGICAL SCENE TIMELINE ({len(scenes)} SCENES) ===\n"
+            f"=== 3. CHRONOLOGICAL SCENE TIMELINE ({len(scenes)} SCENES WITH DURATION) ===\n"
             f"Here are the {len(scenes)} scenes in exact chronological order:\n"
             f"{json.dumps(input_items, ensure_ascii=False, indent=2)}\n\n"
             f"=== INSTRUCTION ===\n"
             f"Based on your comprehension of the FULL SCRIPT above, storyboard all {len(scenes)} scenes in exact numerical order"
-            + (" with STORY CHAINING (detect visual beats, inherit_edit or hold_frame where appropriate).\n" if chaining_mode else ".\n")
+            + (" with STORY CHAINING (detect visual beats, inherit_edit or hold_frame where appropriate, applying duration-aware pacing, prop persistence, kinetic pose flow, and delta prompting).\n" if chaining_mode else ".\n")
             + f"Ensure every scene directly illustrates its narration sentence while keeping seamless visual continuity with the story arc.\n"
             f"Return ONLY the JSON array (id 1 to {len(scenes)}):"
         )
@@ -2015,6 +2055,44 @@ def remove_all_scene_watermarks(project_id: str) -> Dict[str, Any]:
     }
 
 
+def clear_all_scene_images(project_id: str) -> Dict[str, Any]:
+    """Delete all generated scene image files and reset scene statuses to pending."""
+    proj = get_project(project_id)
+    if not proj:
+        raise ValueError(f"Project {project_id} not found")
+
+    pdir = get_project_dir(project_id)
+    scene_dir = pdir / "scenes"
+
+    deleted_count = 0
+    if scene_dir.exists():
+        for img_file in scene_dir.glob("scene_*.png"):
+            try:
+                img_file.unlink(missing_ok=True)
+                deleted_count += 1
+            except Exception as e:
+                logger.warning("Failed to delete scene image %s: %s", img_file, e)
+
+    scenes = proj.get("scenes", [])
+    for sc in scenes:
+        sc["image_url"] = ""
+        sc["cdn_url"] = ""
+        sc["media_id"] = ""
+        sc["status"] = "pending"
+        sc["watermark_removed"] = False
+        sc["error"] = None
+
+    save_project(proj)
+    logger.info("Cleared all images for project %s (%d files deleted, %d scenes reset)", project_id, deleted_count, len(scenes))
+    return {
+        "project_id": project_id,
+        "deleted_files_count": deleted_count,
+        "reset_scenes_count": len(scenes),
+        "scenes": scenes,
+        "message": f"Đã xóa toàn bộ {deleted_count} file ảnh và đưa {len(scenes)} cảnh về trạng thái sẵn sàng tạo mới!",
+    }
+
+
 # ── Stage 6: Video Assembly (FFmpeg) ──────────────────────────────────
 
 
@@ -2300,3 +2378,462 @@ async def render_final_video(
         "duration": proj.get("audio_duration", 0),
         "ken_burns": ken_burns,
     }
+
+
+# ── Stage 7: Viral YouTube SEO & Thumbnail Kit ─────────────────────────
+
+SYSTEM_PROMPT_YOUTUBE_SEO = """You are a World-Class YouTube Growth Strategist & Viral Metadata Architect specializing in high-CTR educational explainer channels (Kurzgesagt – In a Nutshell, MinutePhysics, Veritasium, Johnny Harris, AsapSCIENCE).
+
+CRITICAL REQUIREMENT:
+ALL OUTPUT MUST BE 100% IN ENGLISH. Never use Vietnamese or other languages. This metadata is strictly for a global English YouTube audience.
+
+Follow these strict viral YouTube standards:
+1. TITLES (5 Distinct English Hook Formulas, MAX 65-70 characters each):
+   - Formula 1 (Question Hook): Intense curiosity question that the viewer MUST click to find out (e.g. "How Did Ancient Humans Avoid Pregnancy?").
+   - Formula 2 (Shocking Statement): Counters common wisdom with an unbelievable fact (e.g. "Ancient Birth Control Was Pure Insanity").
+   - Formula 3 (Paradox / Contradiction): Two opposing ideas in conflict (e.g. "No Doctors, No Pills, Yet It Worked").
+   - Formula 4 (Secret / Revelation): Uncovering hidden history or suppressed biological truths (e.g. "The Banned Herb That Rome Used For Centuries").
+   - Formula 5 (Numbers & Stakes): Specific metrics and timeframes (e.g. "300,000 Years of Primitive Medicine Explained").
+   Every title must feature high-power words, high curiosity gap, and optional clean bracket tags like [Explained] or [Animation] or [Documentary].
+
+2. DESCRIPTION (3-Zone YouTube Explainer Architecture, 100% English):
+   - Zone 1 (Above the Fold - first 150 chars): Irresistible hook sentence restating the mystery + Call-to-action (Subscribe).
+   - Zone 2 (Story Deep-Dive & Chapters): 2-3 engaging paragraphs exploring the core scientific/historical mystery without spoilers, followed by 5-8 chronological Chapter Timestamps (e.g. "00:00 The Ancient Dilemma\\n01:15 Herbal Secrets...").
+   - Zone 3 (SEO Footer): 4-6 viral hashtags (#ancienthistory, #science, #animation...), targeted search keywords, and animation credits.
+
+3. TAGS (100% English):
+   - 15-20 comma-separated high-volume English search keywords (mix of broad educational keywords, long-tail search queries, and specific historical/scientific terms).
+
+4. THUMBNAIL CONCEPTS (4 High-CTR 2D Doodle Variants):
+   For each variant, provide:
+   - "variant": integer (1 to 4)
+   - "name": English concept title (e.g., "Variant 1: The Forgotten Method", "Variant 2: Split-Screen Nomadic vs Modern", "Variant 3: The Energy Threshold", "Variant 4: The Ancient Secret")
+   - "slogan": An ultra-compelling, topic-specific YouTube thumbnail slogan / hook phrase.
+     STRICT LENGTH & PSYCHOLOGY RULES:
+     * Length: Strictly 3 to 6 words (NEVER too short like 1-2 words; NEVER too long like 7+ words).
+     * Style: ALL CAPS (e.g. "NO PILLS FOR 300,000 YEARS", "THE SECRET THEY FORGOT", "THEY KNEW THE TRICK!", "HOW DID THEY SURVIVE?!", "NATURE'S 4-YEAR SECRET", "BEFORE MODERN MEDICINE EXISTED").
+     * Must be directly relevant to the video topic, creating an irresistible curiosity gap that drives clicks.
+   - "hook_text": (set to the exact same value as "slogan")
+   - "visual_description": Clear visual breakdown of doodle stick figure expression, props, and composition.
+   - "prompt": Complete English generation prompt for Google Flow. MUST explicitly instruct the AI image generator to draw this exact slogan directly into the artwork as prominent, large bold comic/doodle typography:
+     "Hand-drawn 2D doodle cartoon animation, [scene composition & stick figure action], prominently featuring large bold graphic cartoon typography reading \"{slogan}\" written in vibrant high-contrast letters with thick black outlines across the top of the scene, flat solid colors, high CTR YouTube thumbnail style, 16:9 widescreen, clean vector doodle art, eye-catching composition."
+
+OUTPUT FORMAT:
+Return strictly a valid JSON object:
+{
+  "titles": [
+    {"type": "Question Hook", "title": "..."},
+    {"type": "Shocking Statement", "title": "..."},
+    {"type": "Paradox / Contradiction", "title": "..."},
+    {"type": "Secret / Revelation", "title": "..."},
+    {"type": "Numbers & Stakes", "title": "..."}
+  ],
+  "description": "...",
+  "tags": "tag1, tag2, tag3, ...",
+  "hashtags": ["#ancienthistory", "#education", ...],
+  "thumbnail_concepts": [
+    {
+      "variant": 1,
+      "name": "The Forgotten Method",
+      "slogan": "THE SECRET THEY FORGOT",
+      "hook_text": "THE SECRET THEY FORGOT",
+      "visual_description": "...",
+      "prompt": "Hand-drawn 2D doodle cartoon animation, minimalist stick figure woman carrying a toddler across a vast desert with shocked wide-eyed expression, prominently featuring large bold graphic cartoon typography reading \"THE SECRET THEY FORGOT\" written in vibrant yellow letters with thick black outlines across the top of the scene, flat solid colors, high CTR YouTube thumbnail style, 16:9 widescreen"
+    }
+  ]
+}
+"""
+
+
+async def generate_youtube_metadata_ai(
+    project_id: str,
+    language: str = "en",
+    base_url: str = "",
+    api_key: str = "",
+    model: str = "",
+    custom_instructions: str = "",
+) -> Dict[str, Any]:
+    """Generate viral YouTube titles, description with chapters, tags, and 4 thumbnail concepts (100% English)."""
+    proj = get_project(project_id)
+    if not proj:
+        raise ValueError(f"Project {project_id} not found")
+
+    title = proj.get("title", "")
+    script_text = proj.get("script_text", "")
+    scenes = proj.get("scenes", [])
+    prompt_style = proj.get("prompt_style", "forgotten_civilizations")
+    hero_lock = proj.get("hero_lock", DEFAULT_HERO_LOCK)
+
+    # Sample strategic milestone timestamps for chapters
+    sampled_chapters = []
+    if scenes:
+        step = max(1, len(scenes) // 6)
+        for i in range(0, len(scenes), step):
+            sc = scenes[i]
+            ts = sc.get("timestamp_str", "").strip("[]")
+            txt = sc.get("text", "")[:40].strip()
+            if ts:
+                sampled_chapters.append(f"{ts} - {txt}")
+        # Always include first and last
+        if sampled_chapters and not sampled_chapters[0].startswith("00:00"):
+            sampled_chapters.insert(0, "00:00 - Introduction")
+
+    burl = (base_url or STORY_AI_BASE_URL).rstrip("/")
+    key = api_key or STORY_AI_API_KEY
+    mod = model or STORY_AI_MODEL
+
+    if not key or not burl:
+        raise RuntimeError("Chưa cấu hình API Key hoặc Base URL cho AI Director.")
+
+    lang_instr = "ENGLISH ONLY (High-CTR viral educational YouTube voice like Kurzgesagt, MinutePhysics, Veritasium). All titles, description, chapters, tags, and thumbnail text MUST be strictly 100% in English."
+
+    user_prompt = f"""=== PROJECT TOPIC & TITLE ===
+{title}
+
+=== STORY STYLE & GENRE ===
+Style: {prompt_style}
+Hero anchor: {hero_lock}
+
+=== FULL SCRIPT / NARRATIVE ===
+{script_text[:4000]}
+
+=== TIMELINE CHAPTER MILESTONES ===
+{chr(10).join(sampled_chapters[:8])}
+
+=== INSTRUCTION ===
+Generate complete viral YouTube metadata in {lang_instr}.
+{f'Custom notes: {custom_instructions}' if custom_instructions else ''}
+
+Ensure:
+1. All 5 titles are 100% in English, under 65 characters with extreme clickability.
+2. Description has 3 zones, including the timeline chapters formatted as 'mm:ss - Chapter Title' in English.
+3. 15-20 comma-separated SEO tags in English.
+4. 4 High-CTR 2D Doodle Thumbnail concepts with English names, English hook text, and complete Google Flow English prompts.
+
+Return strictly the valid JSON object:"""
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        content = await _call_llm_completion(
+            client=client,
+            url=f"{burl}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            payload={
+                "model": mod,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT_YOUTUBE_SEO},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.4,
+            },
+            stream=True,
+        )
+
+    # Parse JSON
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+    metadata: Dict[str, Any] = {}
+    try:
+        metadata = json.loads(text)
+    except Exception:
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                metadata = json.loads(m.group(0))
+            except Exception:
+                pass
+
+    if not metadata or not metadata.get("titles"):
+        logger.warning("Failed to parse YouTube metadata JSON, raw response: %s", content[:300])
+        raise RuntimeError("AI không trả về cấu trúc JSON metadata hợp lệ. Vui lòng thử lại.")
+
+    proj["youtube_metadata"] = metadata
+    save_project(proj)
+
+    return metadata
+
+
+async def generate_thumbnail_image(
+    project_id: str,
+    prompt: str,
+    image_model: str = "BELUGA",
+    timeout_seconds: float = 60.0,
+    flow_project_id: str = "",
+    hook_text: str = "",
+    burn_text: bool = False,
+) -> Dict[str, Any]:
+    """Generate a high-CTR YouTube thumbnail via Google Flow with Hero Lock and AI integrated typography."""
+    client = get_flow_client()
+    if not client.connected:
+        raise RuntimeError("Flow Extension is not connected. Open flow.google.com and connect extension.")
+
+    proj = get_project(project_id) or {}
+    pid = flow_project_id or proj.get("flow_project_id") or ""
+    effective_char_id = proj.get("character_media_id", "")
+    refs = [effective_char_id] if effective_char_id else []
+
+    clean_prompt = prompt.strip()
+    if not clean_prompt:
+        raise ValueError("Thumbnail prompt cannot be empty.")
+
+    # Automatically ensure viral slogan typography instruction is included in the prompt
+    ht = hook_text.strip()
+    if ht and f'"{ht}"' not in clean_prompt and f"'{ht}'" not in clean_prompt:
+        clean_prompt += f', prominently featuring large bold graphic cartoon typography reading "{ht}" in vibrant letters with thick black outlines across the top'
+
+    try:
+        res = await asyncio.wait_for(
+            client.generate_images(
+                prompt=clean_prompt,
+                project_id=pid,
+                character_media_ids=refs,
+                aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+                image_model=image_model,
+                count=1,
+            ),
+            timeout=float(timeout_seconds or 60.0),
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"Tạo thumbnail quá {int(timeout_seconds)}s (Timeout).")
+
+    if res.get("status", 200) >= 400 or res.get("error"):
+        err_msg = str(res.get("error") or res.get("data") or "Flow thumbnail generation failed")
+        raise RuntimeError(err_msg)
+
+    media_list = res.get("data", {}).get("media", [])
+    if not media_list:
+        raise RuntimeError("No media returned by Flow generator for thumbnail")
+
+    first_item = media_list[0]
+    cdn_url = (
+        first_item.get("url")
+        or first_item.get("image", {}).get("generatedImage", {}).get("fifeUrl")
+        or first_item.get("image", {}).get("fifeUrl")
+        or first_item.get("fifeUrl")
+    )
+    if not cdn_url:
+        raise RuntimeError(f"No image URL returned by Flow for thumbnail. Response: {first_item}")
+
+    pdir = get_project_dir(project_id)
+    thumb_path = pdir / "thumbnail.png"
+
+    # Download locally
+    watermark_removed = False
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http:
+            img_resp = await http.get(cdn_url)
+            if img_resp.status_code == 200:
+                thumb_path.write_bytes(img_resp.content)
+                # Auto-remove Gemini watermark if possible
+                try:
+                    watermark_removed = remove_gemini_watermark_from_file(thumb_path)
+                except Exception as wm_err:
+                    logger.warning("Could not remove watermark from thumbnail: %s", wm_err)
+                
+                # Keep raw copy for re-burning text
+                try:
+                    raw_path = pdir / "thumbnail_raw.png"
+                    shutil.copy2(thumb_path, raw_path)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("Could not cache thumbnail locally: %s", e)
+
+    # Automatically overlay bold hook text if requested and available
+    text_burned = False
+    if burn_text and hook_text.strip() and thumb_path.exists():
+        try:
+            burn_thumbnail_text(project_id, text=hook_text.strip(), position="top_left", color="yellow")
+            text_burned = True
+        except Exception as burn_err:
+            logger.warning("Could not burn hook text onto thumbnail: %s", burn_err)
+
+    now_ts = int(time.time())
+    local_url = f"/output/story_studio/{project_id}/thumbnail.png?t={now_ts}"
+    final_url = local_url if thumb_path.exists() else cdn_url
+
+    proj = get_project(project_id) or {}
+    proj["thumbnail_url"] = final_url
+    proj["thumbnail_watermark_removed"] = watermark_removed
+    if text_burned:
+        proj["thumbnail_hook_text"] = hook_text.strip()
+        proj["thumbnail_text_burned"] = True
+    save_project(proj)
+
+    return {
+        "project_id": project_id,
+        "thumbnail_url": final_url,
+        "cdn_url": cdn_url,
+        "thumbnail_watermark_removed": watermark_removed,
+        "thumbnail_text_burned": text_burned,
+        "hook_text": hook_text.strip() if text_burned else "",
+        "status": "completed",
+    }
+
+
+def remove_thumbnail_watermark(project_id: str) -> Dict[str, Any]:
+    """Remove watermark from the project's generated thumbnail image file."""
+    pdir = get_project_dir(project_id)
+    thumb_path = pdir / "thumbnail.png"
+    if not thumb_path.exists():
+        raise FileNotFoundError(f"Chưa có ảnh thumbnail tại {thumb_path}. Vui lòng tạo thumbnail trước.")
+
+    ok = remove_gemini_watermark_from_file(thumb_path)
+    if not ok:
+        raise RuntimeError("Không thể xóa watermark trên ảnh thumbnail (opencv-python không xử lý được)")
+
+    raw_path = pdir / "thumbnail_raw.png"
+    if raw_path.exists():
+        try:
+            remove_gemini_watermark_from_file(raw_path)
+        except Exception:
+            pass
+
+    proj = get_project(project_id)
+    now_ts = int(time.time())
+    local_url = f"/output/story_studio/{project_id}/thumbnail.png?t={now_ts}"
+    proj["thumbnail_url"] = local_url
+    proj["thumbnail_watermark_removed"] = True
+    save_project(proj)
+
+    return {
+        "project_id": project_id,
+        "thumbnail_url": local_url,
+        "thumbnail_watermark_removed": True,
+        "status": "success",
+    }
+
+
+def burn_thumbnail_text(
+    project_id: str,
+    text: str = "",
+    position: str = "top_left",
+    color: str = "yellow",
+) -> Dict[str, Any]:
+    """Overlay large, bold, high-contrast YouTube thumbnail hook typography onto thumbnail.png."""
+    pdir = get_project_dir(project_id)
+    thumb_path = pdir / "thumbnail.png"
+    if not thumb_path.exists():
+        raise FileNotFoundError(f"Chưa có ảnh thumbnail tại {thumb_path}. Vui lòng tạo thumbnail trước.")
+
+    hook_text = (text or "").strip()
+    if not hook_text:
+        proj = get_project(project_id) or {}
+        ym = proj.get("youtube_metadata", {})
+        concepts = ym.get("thumbnail_concepts", [])
+        if concepts:
+            hook_text = concepts[0].get("hook_text", "")
+
+    if not hook_text:
+        raise ValueError("Chưa có nội dung chữ hook để đè lên thumbnail.")
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.open(thumb_path).convert("RGBA")
+    w, h = img.size
+
+    font_candidates = [
+        r"C:\Windows\Fonts\impact.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\seguiemj.ttf",
+        r"C:\Windows\Fonts\tahoma.ttf",
+    ]
+    font_path = None
+    for fc in font_candidates:
+        if os.path.exists(fc):
+            font_path = fc
+            break
+
+    # Responsive font sizing (approx 10-12% of image height)
+    font_size = max(44, int(h * 0.11))
+    if len(hook_text) > 16:
+        font_size = int(font_size * 0.75)
+    elif len(hook_text) > 10:
+        font_size = int(font_size * 0.88)
+
+    try:
+        font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
+    except Exception:
+        font = ImageFont.load_default()
+
+    draw = ImageDraw.Draw(img)
+
+    fill_map = {
+        "yellow": "#FFE600",
+        "white": "#FFFFFF",
+        "red": "#FF2A2A",
+        "cyan": "#00E5FF",
+    }
+    fill_color = fill_map.get(color.lower(), "#FFE600")
+    stroke_color = "#000000"
+    stroke_width = max(6, int(font_size * 0.08))
+
+    bbox = draw.textbbox((0, 0), hook_text, font=font, stroke_width=stroke_width)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    pad_x = int(w * 0.05)
+    pad_y = int(h * 0.06)
+
+    if position == "top_left":
+        pos_x = pad_x
+        pos_y = pad_y
+    elif position == "top_center":
+        pos_x = (w - text_w) // 2
+        pos_y = pad_y
+    elif position == "top_right":
+        pos_x = w - text_w - pad_x
+        pos_y = pad_y
+    elif position == "bottom_left":
+        pos_x = pad_x
+        pos_y = h - text_h - pad_y
+    elif position == "bottom_center":
+        pos_x = (w - text_w) // 2
+        pos_y = h - text_h - pad_y
+    else:
+        pos_x = pad_x
+        pos_y = pad_y
+
+    # Shadow offset
+    shadow_offset = max(4, int(stroke_width * 0.8))
+    draw.text(
+        (pos_x + shadow_offset, pos_y + shadow_offset),
+        hook_text,
+        font=font,
+        fill=(0, 0, 0, 190),
+        stroke_width=stroke_width,
+        stroke_fill=(0, 0, 0, 190),
+    )
+
+    # Main text with thick stroke
+    draw.text(
+        (pos_x, pos_y),
+        hook_text,
+        font=font,
+        fill=fill_color,
+        stroke_width=stroke_width,
+        stroke_fill=stroke_color,
+    )
+
+    final_img = img.convert("RGB")
+    final_img.save(thumb_path, format="PNG")
+
+    now_ts = int(time.time())
+    local_url = f"/output/story_studio/{project_id}/thumbnail.png?t={now_ts}"
+
+    proj = get_project(project_id) or {}
+    proj["thumbnail_url"] = local_url
+    proj["thumbnail_hook_text"] = hook_text
+    proj["thumbnail_text_burned"] = True
+    save_project(proj)
+
+    return {
+        "status": "success",
+        "thumbnail_url": local_url,
+        "hook_text": hook_text,
+        "position": position,
+        "color": color,
+    }
+

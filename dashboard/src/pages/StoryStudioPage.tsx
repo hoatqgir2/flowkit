@@ -34,6 +34,10 @@ import {
   Save,
   Link2,
   Film,
+  Copy,
+  Scissors,
+  Flame,
+  Smartphone,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -56,6 +60,49 @@ interface SceneItem {
   status?: 'pending' | 'generating' | 'completed' | 'failed'
   error?: string
   watermark_removed?: boolean
+}
+
+export interface YoutubeTitleItem {
+  type: string
+  title: string
+}
+
+export interface YoutubeThumbnailConcept {
+  variant: number
+  name: string
+  slogan?: string
+  hook_text: string
+  visual_description: string
+  prompt: string
+}
+
+export interface YoutubeMetadata {
+  titles: YoutubeTitleItem[]
+  description: string
+  tags: string
+  hashtags: string[]
+  thumbnail_concepts: YoutubeThumbnailConcept[]
+}
+
+interface ShortItem {
+  id: string
+  title: string
+  description?: string
+  hook_text: string
+  hook_reason?: string
+  virality_score: number
+  start_scene_id: number
+  end_scene_id: number
+  start_s: number
+  end_s: number
+  duration_s: number
+  layout_mode?: string
+  status: 'ready' | 'rendering' | 'completed' | 'failed'
+  video_url?: string
+  thumb_url?: string
+  video_size?: number
+  hashtags?: string[]
+  created_at?: number
 }
 
 interface StoryProject {
@@ -87,6 +134,13 @@ interface StoryProject {
   topic_requirements?: string
   chaining_mode?: boolean
   ken_burns?: boolean
+  youtube_metadata?: YoutubeMetadata
+  thumbnail_url?: string
+  thumbnail_watermark_removed?: boolean
+  thumbnail_hook_text?: string
+  thumbnail_text_burned?: boolean
+  shorts_candidates?: ShortItem[]
+  shorts?: ShortItem[]
 }
 
 export interface PromptStyleInfo {
@@ -220,6 +274,21 @@ export default function StoryStudioPage() {
   const [burnSubtitles, setBurnSubtitles] = useState<boolean>(true)
   const [kenBurns, setKenBurns] = useState<boolean>(() => localStorage.getItem('fk_ken_burns') !== 'false')
   const [renderingVideo, setRenderingVideo] = useState<boolean>(false)
+
+  // YouTube Viral Kit State
+  const [isGeneratingYoutubeMeta, setIsGeneratingYoutubeMeta] = useState<boolean>(false)
+  const [isGeneratingThumbnail, setIsGeneratingThumbnail] = useState<boolean>(false)
+  const [isRemovingThumbWatermark, setIsRemovingThumbWatermark] = useState<boolean>(false)
+  const [generatingThumbVariant, setGeneratingThumbVariant] = useState<number | null>(null)
+  const [copiedField, setCopiedField] = useState<string | null>(null)
+
+  // AI Auto Shorts Extractor State
+  const [isAnalyzingShorts, setIsAnalyzingShorts] = useState<boolean>(false)
+  const [renderingShortId, setRenderingShortId] = useState<string | null>(null)
+  const [isBatchRenderingShorts, setIsBatchRenderingShorts] = useState<boolean>(false)
+  const [shortsLayoutMode, setShortsLayoutMode] = useState<'stacked' | 'full_crop'>('stacked')
+  const [shortsSfxMode, setShortsSfxMode] = useState<'none' | 'ding'>('none')
+  const [customShortsInstruction, setCustomShortsInstruction] = useState<string>('')
 
   // Project Rename & Delete State
   const [isEditingTitle, setIsEditingTitle] = useState<boolean>(false)
@@ -1307,6 +1376,41 @@ export default function StoryStudioPage() {
     }
   }
 
+  const [isClearingImages, setIsClearingImages] = useState<boolean>(false)
+
+  const handleClearAllImages = async () => {
+    if (!currentProject) return
+    const completedScenes = (currentProject.scenes || []).filter(s => s.status === 'completed' || s.image_url)
+    if (completedScenes.length === 0) {
+      setStatusMsg({ type: 'err', text: 'Dự án chưa có ảnh nào để xóa.' })
+      return
+    }
+
+    if (!confirm(`⚠️ BẠN CÓ CHẮC CHẮN MUỐN XÓA HẾT TOÀN BỘ ${completedScenes.length} ẢNH ĐÃ TẠO?\n\nToàn bộ file ảnh đã lưu trên máy sẽ bị xóa sạch và tất cả phân cảnh được đưa về trạng thái chờ tạo lại (kịch bản và câu prompt vẫn được bảo toàn nguyên vẹn 100%). Thao tác này không thể hoàn tác!`)) {
+      return
+    }
+
+    setIsClearingImages(true)
+    try {
+      const res = await fetchAPI<{ project_id: string; deleted_files_count: number; reset_scenes_count: number; scenes: SceneItem[]; message: string }>(
+        `/api/story-studio/projects/${currentProject.id}/clear-images`,
+        { method: 'POST' }
+      )
+      setCurrentProject(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          scenes: res.scenes,
+        }
+      })
+      setStatusMsg({ type: 'ok', text: res.message || `Đã xóa sạch toàn bộ ${res.deleted_files_count} ảnh!` })
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi khi xóa toàn bộ ảnh: ${err.message}` })
+    } finally {
+      setIsClearingImages(false)
+    }
+  }
+
   // ── Stage 6: Render Final Video ─────────────────────────────────────
   const handleRenderVideo = async () => {
     if (!currentProject) return
@@ -1334,6 +1438,234 @@ export default function StoryStudioPage() {
     }
   }
 
+  // ── Stage 6.5: Viral YouTube SEO & Thumbnail Handlers ───────────────
+  const handleGenerateYoutubeMetadata = async (lang: string = 'en') => {
+    if (!currentProject) return
+    setIsGeneratingYoutubeMeta(true)
+    setStatusMsg({ type: 'ok', text: 'Đang dùng AI tạo bộ Metadata YouTube Viral tiếng Anh chuẩn SEO...' })
+    try {
+      const res = await fetchAPI<YoutubeMetadata>(`/api/story-studio/projects/${currentProject.id}/youtube-metadata`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          language: lang || 'en',
+          base_url: aiBaseUrl.trim(),
+          api_key: aiApiKey.trim(),
+          model: aiModel.trim(),
+        }),
+      })
+      setCurrentProject(prev => prev ? { ...prev, youtube_metadata: res } : null)
+      setStatusMsg({ type: 'ok', text: '✨ Đã tạo xong bộ Metadata YouTube Viral tiếng Anh chuẩn SEO!' })
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi tạo metadata YouTube: ${err.message}` })
+    } finally {
+      setIsGeneratingYoutubeMeta(false)
+    }
+  }
+
+  const handleGenerateThumbnail = async (promptToUse: string, variantIndex?: number, hookText?: string) => {
+    if (!currentProject) return
+    if (!promptToUse.trim()) {
+      setStatusMsg({ type: 'err', text: 'Prompt thumbnail không được để trống.' })
+      return
+    }
+    const slogan = (hookText || '').trim()
+    setIsGeneratingThumbnail(true)
+    if (variantIndex !== undefined) setGeneratingThumbVariant(variantIndex)
+    setStatusMsg({ type: 'ok', text: 'Đang gửi Google Flow tạo Thumbnail 16:9 (AI trực tiếp vẽ slogan hấp dẫn vào ảnh)...' })
+    try {
+      const res = await fetchAPI<{
+        thumbnail_url: string
+        status: string
+        thumbnail_watermark_removed?: boolean
+        hook_text?: string
+      }>(`/api/story-studio/projects/${currentProject.id}/generate-thumbnail`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: promptToUse,
+          image_model: imageModel,
+          flow_project_id: flowProjectId.trim() || currentProject.flow_project_id,
+          timeout_seconds: 75,
+          hook_text: slogan,
+          burn_text: false,
+        }),
+      })
+      setCurrentProject(prev => prev ? {
+        ...prev,
+        thumbnail_url: res.thumbnail_url,
+        thumbnail_watermark_removed: res.thumbnail_watermark_removed ?? true,
+        thumbnail_hook_text: res.hook_text || slogan,
+      } : null)
+      setStatusMsg({ type: 'ok', text: '🎨 Tạo Thumbnail YouTube hoàn tất! AI đã vẽ slogan hấp dẫn trực tiếp trong ảnh.' })
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi tạo Thumbnail: ${err.message}` })
+    } finally {
+      setIsGeneratingThumbnail(false)
+      setGeneratingThumbVariant(null)
+    }
+  }
+
+  const handleRemoveThumbnailWatermark = async () => {
+    if (!currentProject) return
+    setIsRemovingThumbWatermark(true)
+    setStatusMsg({ type: 'ok', text: 'Đang xóa watermark logo Gemini trên ảnh Thumbnail...' })
+    try {
+      const res = await fetchAPI<{ status: string; thumbnail_url: string; thumbnail_watermark_removed: boolean }>(
+        `/api/story-studio/projects/${currentProject.id}/remove-thumbnail-watermark`,
+        { method: 'POST' }
+      )
+      if (res?.thumbnail_url) {
+        setCurrentProject(prev => prev ? {
+          ...prev,
+          thumbnail_url: res.thumbnail_url,
+          thumbnail_watermark_removed: true,
+        } : null)
+        setStatusMsg({ type: 'ok', text: '✓ Đã xóa watermark logo Gemini trên Thumbnail thành công!' })
+      }
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi khi xóa watermark thumbnail: ${err.message || err}` })
+    } finally {
+      setIsRemovingThumbWatermark(false)
+    }
+  }
+
+  const handleCopyText = (text: string, fieldKey: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedField(fieldKey)
+    setTimeout(() => setCopiedField(null), 2500)
+  }
+
+  // ── AI Auto Shorts Handlers ─────────────────────────────────────────
+  const handleAnalyzeShorts = async () => {
+    if (!currentProject) return
+    setIsAnalyzingShorts(true)
+    setStatusMsg({ type: 'ok', text: '⚡ AI đang quét kịch bản và tìm các đoạn Short cao trào...' })
+    try {
+      const res = await fetchAPI<{ candidates: ShortItem[] }>(
+        `/api/story-studio/projects/${currentProject.id}/shorts/analyze`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            base_url: aiBaseUrl,
+            api_key: aiApiKey,
+            model: aiModel,
+            custom_instructions: customShortsInstruction,
+          }),
+        }
+      )
+      if (res?.candidates) {
+        setCurrentProject(prev => prev ? {
+          ...prev,
+          shorts_candidates: res.candidates,
+        } : null)
+        setStatusMsg({ type: 'ok', text: `✨ AI đã tìm thấy ${res.candidates.length} đoạn Short tiềm năng có điểm viral cao!` })
+      }
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi phân tích Shorts: ${err.message || err}` })
+    } finally {
+      setIsAnalyzingShorts(false)
+    }
+  }
+
+  const handleRenderShort = async (shortId: string) => {
+    if (!currentProject) return
+    setRenderingShortId(shortId)
+    setStatusMsg({ type: 'ok', text: `Đang render Short #${shortId} (Giọng đọc sạch, 9:16)...` })
+    try {
+      const res = await fetchAPI<ShortItem>(
+        `/api/story-studio/projects/${currentProject.id}/shorts/render`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            short_id: shortId,
+            layout_mode: shortsLayoutMode,
+            burn_subtitles: false,
+            sfx_mode: shortsSfxMode,
+          }),
+        }
+      )
+      if (res) {
+        setCurrentProject(prev => {
+          if (!prev) return prev
+          const updatedShorts = (prev.shorts || []).filter(s => s.id !== shortId)
+          updatedShorts.push(res)
+          const updatedCandidates = (prev.shorts_candidates || []).map(c => 
+            c.id === shortId ? { ...c, status: 'completed' as const } : c
+          )
+          return {
+            ...prev,
+            shorts: updatedShorts,
+            shorts_candidates: updatedCandidates,
+          }
+        })
+        setStatusMsg({ type: 'ok', text: `✓ Đã render Short #${shortId} thành công! Bạn có thể xem và tải về ngay.` })
+      }
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi render Short #${shortId}: ${err.message || err}` })
+    } finally {
+      setRenderingShortId(null)
+    }
+  }
+
+  const handleBatchRenderShorts = async () => {
+    if (!currentProject) return
+    setIsBatchRenderingShorts(true)
+    setStatusMsg({ type: 'ok', text: 'Đang tiến hành render toàn bộ các video Shorts...' })
+    try {
+      const res = await fetchAPI<{ shorts: ShortItem[] }>(
+        `/api/story-studio/projects/${currentProject.id}/shorts/batch-render`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            layout_mode: shortsLayoutMode,
+            burn_subtitles: false,
+            sfx_mode: shortsSfxMode,
+          }),
+        }
+      )
+      if (res?.shorts) {
+        setCurrentProject(prev => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            shorts: res.shorts,
+          }
+        })
+        setStatusMsg({ type: 'ok', text: `✓ Đã render hoàn tất ${res.shorts.length} video Shorts!` })
+      }
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi batch render Shorts: ${err.message || err}` })
+    } finally {
+      setIsBatchRenderingShorts(false)
+    }
+  }
+
+  const handleDeleteShort = async (shortId: string) => {
+    if (!currentProject) return
+    try {
+      await fetchAPI(`/api/story-studio/projects/${currentProject.id}/shorts/${shortId}`, {
+        method: 'DELETE',
+      })
+      setCurrentProject(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          shorts: (prev.shorts || []).filter(s => s.id !== shortId),
+          shorts_candidates: (prev.shorts_candidates || []).map(c => 
+            c.id === shortId ? { ...c, status: 'ready' as const } : c
+          ),
+        }
+      })
+      setStatusMsg({ type: 'ok', text: `Đã xóa Short #${shortId}.` })
+    } catch (err: any) {
+      setStatusMsg({ type: 'err', text: `Lỗi khi xóa Short: ${err.message || err}` })
+    }
+  }
+
   // Steps Definition
   const STAGES = [
     { num: 1, title: 'Nhân Vật Tham Chiếu', icon: User, desc: 'Hero Lock cố định' },
@@ -1341,7 +1673,7 @@ export default function StoryStudioPage() {
     { num: 3, title: 'Thu Âm Minimax', icon: Mic, desc: 'T2A v2 Audio' },
     { num: 4, title: 'Bóc Tách Transcript', icon: Clock, desc: 'Khớp mốc thời gian' },
     { num: 5, title: 'Tạo Ảnh Doodle', icon: ImageIcon, desc: 'Khớp nhân vật gốc' },
-    { num: 6, title: 'Ghép & Xem Video', icon: Video, desc: 'Render MP4 thành phẩm' },
+    { num: 6, title: 'Ghép Video & YouTube', icon: Video, desc: 'Render MP4 & Viral Kit' },
   ]
 
   return (
@@ -2212,6 +2544,18 @@ export default function StoryStudioPage() {
                       {isBatchWatermarking ? `Đang xóa watermark...` : `Xóa Watermark Tất Cả (${completedCount})`}
                     </Button>
 
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleClearAllImages}
+                      disabled={isBatchGenerating || isClearingImages || completedCount === 0}
+                      className="text-xs border-rose-800/80 text-rose-300 hover:bg-rose-950/60 hover:text-rose-200 gap-1.5 font-medium shadow-sm"
+                      title="Xóa vĩnh viễn toàn bộ file ảnh đã tạo và đưa tất cả cảnh về trạng thái chờ tạo mới (giữ nguyên câu prompt và timeline)"
+                    >
+                      <Trash2 className={`w-3.5 h-3.5 ${isClearingImages ? 'animate-spin text-rose-400' : 'text-rose-400'}`} />
+                      {isClearingImages ? `Đang xóa ảnh...` : `Xóa Hết Ảnh (${completedCount})`}
+                    </Button>
+
                     {hasGenerating && (
                       <Button
                         size="sm"
@@ -2968,7 +3312,8 @@ export default function StoryStudioPage() {
         {/* STAGE 6: GHÉP & XEM VIDEO THÀNH PHẨM (VIDEO ASSEMBLY)          */}
         {/* ═════════════════════════════════════════════════════════════ */}
         {activeStage === 6 && (
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
             <Card className="md:col-span-5 p-5 bg-slate-900/80 border-slate-800 space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2 mb-1">
@@ -3086,7 +3431,607 @@ export default function StoryStudioPage() {
               )}
             </Card>
           </div>
-        )}
+
+          {/* ── YOUTUBE VIRAL METADATA & THUMBNAIL KIT ── */}
+          <Card className="p-6 bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl space-y-6 mt-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-bold text-amber-400 flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-amber-400" />
+                    Bộ Xuất Bản YouTube Viral (Viral Kit: Tiêu Đề, Mô Tả & Thumbnail)
+                  </span>
+                  <Badge variant="outline" className="border-amber-500/40 text-amber-300 bg-amber-500/10 text-[10px]">
+                    Chuẩn SEO Explainer
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-400 max-w-2xl">
+                  Tối ưu thuật toán YouTube và tỉ lệ nhấp (CTR): 5 công thức tiêu đề giật tít, mô tả 3-Zone kèm mốc chương tự động, 4 concept thumbnail độc đáo và bộ thẻ tag hoàn chỉnh.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs font-medium text-slate-300">
+                  <span className="text-sm">🇬🇧</span>
+                  <span className="font-semibold text-amber-300">English Only</span>
+                  <span className="text-[10px] text-slate-500">(Chuẩn YouTube Quốc Tế)</span>
+                </div>
+
+                <Button
+                  size="sm"
+                  onClick={() => handleGenerateYoutubeMetadata('en')}
+                  disabled={isGeneratingYoutubeMeta || !currentProject?.script_text}
+                  className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs gap-1.5 h-8 shadow-md shadow-amber-500/20"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${isGeneratingYoutubeMeta ? 'animate-spin' : ''}`} />
+                  {isGeneratingYoutubeMeta ? 'AI Đang Xây Dựng Metadata...' : (currentProject?.youtube_metadata ? '✨ Tạo Lại Metadata Tiếng Anh' : '✨ Tạo Bộ Metadata Bằng AI (English)')}
+                </Button>
+              </div>
+            </div>
+
+            {/* Render Metadata if present */}
+            {currentProject?.youtube_metadata && (
+              <div className="space-y-6">
+                {/* SECTION 1: 5 TIÊU ĐỀ VIRAL */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5" /> 1. Gợi Ý 5 Tiêu Đề Hook Viral (Chọn 1 tiêu đề hay nhất)
+                    </span>
+                    <span className="text-[11px] text-slate-500">Giới hạn lý tưởng: dưới 65-70 ký tự</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {currentProject.youtube_metadata.titles?.map((t, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-slate-950/70 border border-slate-800 hover:border-amber-500/50 rounded-xl flex items-start justify-between gap-3 group transition-all"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-[9px] bg-slate-900 border-amber-500/30 text-amber-300 font-mono">
+                              #{idx + 1} {t.type}
+                            </Badge>
+                            <span className="text-[10px] text-slate-500 font-mono">{t.title.length} ký tự</span>
+                          </div>
+                          <p className="text-xs font-semibold text-slate-100 group-hover:text-amber-200 transition-colors leading-snug">
+                            {t.title}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleCopyText(t.title, `title_${idx}`)}
+                          className="h-7 px-2 text-slate-400 hover:text-amber-300 hover:bg-slate-800 text-[11px] gap-1 shrink-0"
+                          title="Sao chép tiêu đề này"
+                        >
+                          {copiedField === `title_${idx}` ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedField === `title_${idx}` ? 'Đã chép' : 'Copy'}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* SECTION 2: BỘ THUMBNAIL VIRAL & TRÌNH TẠO ẢNH */}
+                <div className="space-y-3 pt-2 border-t border-slate-800/80">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5" /> 2. Bộ Thumbnail Viral (4 Concept Khác Nhau)
+                    </span>
+                    <span className="text-[11px] text-slate-500">Tỉ lệ 16:9 • Khóa nhân vật theo Hero Lock</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                    {/* Left: Thumbnail Preview */}
+                    <div className="lg:col-span-5 space-y-3">
+                      <div className="aspect-video bg-black rounded-xl border border-slate-800 overflow-hidden relative flex items-center justify-center group shadow-md">
+                        {currentProject.thumbnail_url ? (
+                          <>
+                            <img
+                              src={currentProject.thumbnail_url}
+                              alt="YouTube Thumbnail"
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all gap-2 text-white text-xs">
+                              <a
+                                href={currentProject.thumbnail_url}
+                                download="youtube_thumbnail.png"
+                                className="flex items-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg shadow-md"
+                              >
+                                <Download className="w-3.5 h-3.5" /> Tải Thumbnail (PNG)
+                              </a>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-center p-6 text-slate-600 space-y-1">
+                            <ImageIcon className="w-10 h-10 mx-auto opacity-30 mb-2" />
+                            <div className="text-xs font-medium text-slate-400">Chưa có ảnh Thumbnail</div>
+                            <div className="text-[10px] text-slate-500">Bấm nút "Tạo Thumbnail Này" ở một trong 4 mẫu bên phải</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {currentProject.thumbnail_url && (
+                        <div className="space-y-2.5 pt-1">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] ${
+                                  currentProject.thumbnail_watermark_removed
+                                    ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+                                    : 'border-slate-700 text-slate-300 bg-slate-900/50'
+                                }`}
+                              >
+                                {currentProject.thumbnail_watermark_removed ? '✓ Đã Xóa Watermark' : '✓ Thumbnail Sẵn Sàng'}
+                              </Badge>
+                              {currentProject.thumbnail_hook_text && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] border-amber-500/40 text-amber-300 bg-amber-950/40 font-mono"
+                                >
+                                  🔤 Chữ: "{currentProject.thumbnail_hook_text}"
+                                </Badge>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={handleRemoveThumbnailWatermark}
+                                disabled={isRemovingThumbWatermark}
+                                className={`text-[10px] h-7 px-2 gap-1 font-medium transition-colors ${
+                                  currentProject.thumbnail_watermark_removed
+                                    ? 'border-emerald-600/50 text-emerald-400 hover:bg-emerald-950/40'
+                                    : 'border-cyan-700/60 text-cyan-300 hover:bg-cyan-950/40 hover:text-cyan-200'
+                                }`}
+                                title="Xóa watermark Gemini ở góc dưới bên phải của thumbnail"
+                              >
+                                <Eraser className={`w-3 h-3 ${isRemovingThumbWatermark ? 'animate-spin' : ''}`} />
+                                {isRemovingThumbWatermark ? 'Đang xóa...' : currentProject.thumbnail_watermark_removed ? 'Xóa Lại WM' : 'Xóa Watermark'}
+                              </Button>
+
+                              <a
+                                href={currentProject.thumbnail_url}
+                                download="youtube_thumbnail.png"
+                                className="text-[11px] text-amber-300 hover:text-white flex items-center gap-1 font-semibold px-2.5 py-1 bg-amber-600/30 hover:bg-amber-600/50 rounded-lg border border-amber-500/30 transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5" /> Tải Ảnh
+                              </a>
+                            </div>
+                          </div>
+
+                          {/* AI In-Image Slogan Banner */}
+                          <div className="p-2.5 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                            <span className="text-slate-400 font-medium flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Slogan AI vẽ trực tiếp trong ảnh:
+                            </span>
+                            <span className="font-bold text-amber-300 tracking-wide">
+                              "{currentProject.thumbnail_hook_text || (currentProject.youtube_metadata?.thumbnail_concepts?.[0]?.slogan || currentProject.youtube_metadata?.thumbnail_concepts?.[0]?.hook_text || 'THE SECRET THEY FORGOT')}"
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right: 4 Concepts */}
+                    <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {currentProject.youtube_metadata.thumbnail_concepts?.map((c, cIdx) => (
+                        <div
+                          key={cIdx}
+                          className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-2 flex flex-col justify-between"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <Badge variant="outline" className="text-[9px] bg-slate-900 border-indigo-500/40 text-indigo-300 font-mono">
+                                Concept #{c.variant || cIdx + 1}: {c.name}
+                              </Badge>
+                            </div>
+                            <div className="p-1.5 bg-amber-950/30 border border-amber-500/20 rounded text-[11px] font-bold text-amber-300">
+                              💬 Slogan: "{c.slogan || c.hook_text}"
+                            </div>
+                            <p className="text-[10px] text-slate-400 line-clamp-2">
+                              {c.visual_description}
+                            </p>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-800 flex items-center gap-1.5">
+                            <Button
+                              size="sm"
+                              onClick={() => handleGenerateThumbnail(c.prompt, c.variant || cIdx + 1, c.hook_text)}
+                              disabled={isGeneratingThumbnail}
+                              className="flex-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-[11px] h-7 font-semibold gap-1 shadow-sm"
+                            >
+                              <Sparkles className={`w-3.5 h-3.5 ${isGeneratingThumbnail && generatingThumbVariant === (c.variant || cIdx + 1) ? 'animate-spin' : ''}`} />
+                              {isGeneratingThumbnail && generatingThumbVariant === (c.variant || cIdx + 1) ? 'Đang tạo...' : '🎨 Tạo Thumbnail Này'}
+                            </Button>
+
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleCopyText(c.prompt, `thumb_prompt_${cIdx}`)}
+                              className="h-7 px-2 text-slate-400 hover:text-slate-200 text-[10px]"
+                              title="Sao chép prompt này"
+                            >
+                              {copiedField === `thumb_prompt_${cIdx}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION 3: MÔ TẢ 3-ZONE (DESCRIPTION) & SECTION 4: TAGS */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 pt-2 border-t border-slate-800/80">
+                  {/* Description (7 cols) */}
+                  <div className="md:col-span-7 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" /> 3. Mô Tả Video Chuẩn 3-Zone (Kèm Mốc Chapters)
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleCopyText(currentProject.youtube_metadata?.description || '', 'desc')}
+                        className="h-7 px-2.5 text-xs text-amber-400 hover:text-amber-300 hover:bg-slate-800 gap-1 font-semibold"
+                      >
+                        {copiedField === 'desc' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedField === 'desc' ? 'Đã Sao Chép Mô Tả' : 'Sao Chép Mô Tả'}
+                      </Button>
+                    </div>
+
+                    <textarea
+                      readOnly
+                      rows={10}
+                      value={currentProject.youtube_metadata.description}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500 leading-relaxed resize-none"
+                    />
+                  </div>
+
+                  {/* Tags & Hashtags (5 cols) */}
+                  <div className="md:col-span-5 space-y-4">
+                    {/* Hashtags */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                          Hashtags
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleCopyText(currentProject.youtube_metadata?.hashtags?.join(' ') || '', 'hashtags')}
+                          className="h-6 px-2 text-[10px] text-slate-400 hover:text-amber-300 gap-1"
+                        >
+                          {copiedField === 'hashtags' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          Copy
+                        </Button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 p-2.5 bg-slate-950/70 border border-slate-800 rounded-xl">
+                        {currentProject.youtube_metadata.hashtags?.map((h, i) => (
+                          <Badge key={i} variant="outline" className="text-[10px] bg-slate-900 border-indigo-500/30 text-indigo-300 font-mono">
+                            {h}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* SEO Tags */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                          4. Thẻ Tags YouTube (Dán vào ô Tags)
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleCopyText(currentProject.youtube_metadata?.tags || '', 'tags')}
+                          className="h-6 px-2 text-[10px] text-amber-400 hover:text-amber-300 gap-1 font-semibold"
+                        >
+                          {copiedField === 'tags' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          {copiedField === 'tags' ? 'Đã Chép' : 'Sao Chép Tags'}
+                        </Button>
+                      </div>
+                      <textarea
+                        readOnly
+                        rows={4}
+                        value={currentProject.youtube_metadata.tags}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-amber-500 leading-normal resize-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* ── AI AUTO SHORTS EXTRACTOR (VOICE-ONLY + WHOOSH & DING SFX) ── */}
+          <Card className="p-6 bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl space-y-6 mt-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-bold text-amber-400 flex items-center gap-2">
+                    <Scissors className="w-5 h-5 text-amber-400" />
+                    Tách Shorts Tự Động Bằng AI (AI Shorts Studio)
+                  </span>
+                  <Badge variant="outline" className="border-amber-500/40 text-amber-300 bg-amber-500/10 text-[10px] flex items-center gap-1 font-semibold">
+                    <Smartphone className="w-3 h-3" /> 9:16 Vertical
+                  </Badge>
+                  <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[10px]">
+                    Clean Voice-Only
+                  </Badge>
+                  <Badge variant="outline" className="border-purple-500/40 text-purple-300 bg-purple-500/10 text-[10px]">
+                    Không Phụ Đề
+                  </Badge>
+                  <Badge variant="outline" className="border-blue-500/40 text-blue-300 bg-blue-500/10 text-[10px]">
+                    0% Vi Phạm Bản Quyền
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-400 max-w-2xl">
+                  AI quét kịch bản & timeline để tự động chọn các phân đoạn cao trào (50–60 giây) bám sát trực tiếp chủ đề chính và có retention cao nhất. Video được dựng bố cục dọc 9:16 (Stacked Explainer), âm thanh giọng đọc Minimax trong trẻo 100% (không dính tạp âm chuyển cảnh), tối giản không chèn phụ đề.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Layout Mode Selector */}
+                <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
+                  <span className="text-slate-400 text-[11px]">Bố cục 9:16:</span>
+                  <select
+                    value={shortsLayoutMode}
+                    onChange={e => setShortsLayoutMode(e.target.value as any)}
+                    className="bg-transparent text-amber-300 font-medium text-xs focus:outline-none cursor-pointer"
+                  >
+                    <option value="stacked" className="bg-slate-900 text-slate-200">Stacked Explainer (16:9 + Nền Mờ)</option>
+                    <option value="full_crop" className="bg-slate-900 text-slate-200">Full 9:16 Crop (Toàn Màn Hình)</option>
+                  </select>
+                </div>
+
+                {/* Audio SFX Selector */}
+                <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
+                  <span className="text-slate-400 text-[11px]">Âm thanh:</span>
+                  <select
+                    value={shortsSfxMode}
+                    onChange={e => setShortsSfxMode(e.target.value as any)}
+                    className="bg-transparent text-emerald-400 font-medium text-xs focus:outline-none cursor-pointer"
+                  >
+                    <option value="none" className="bg-slate-900 text-slate-200">Chỉ giọng đọc sạch 100% (Khuyên dùng)</option>
+                    <option value="ding" className="bg-slate-900 text-slate-200">Giọng đọc + Chuông Ding mở đầu</option>
+                  </select>
+                </div>
+
+                {/* Batch Render Button */}
+                {(currentProject?.shorts_candidates?.length || 0) > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={handleBatchRenderShorts}
+                    disabled={isBatchRenderingShorts || renderingShortId !== null}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs gap-1.5 h-8 shadow-md"
+                  >
+                    <RotateCw className={`w-3.5 h-3.5 ${isBatchRenderingShorts ? 'animate-spin' : ''}`} />
+                    {isBatchRenderingShorts ? 'Đang Render Tất Cả...' : 'Render Tất Cả Shorts'}
+                  </Button>
+                )}
+
+                {/* Analyze Button */}
+                <Button
+                  size="sm"
+                  onClick={handleAnalyzeShorts}
+                  disabled={isAnalyzingShorts || !currentProject?.audio_url || !currentProject?.scenes?.length}
+                  className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs gap-1.5 h-8 shadow-md shadow-amber-500/20"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${isAnalyzingShorts ? 'animate-spin' : ''}`} />
+                  {isAnalyzingShorts ? 'AI Đang Quét Kịch Bản...' : '⚡ Phân Tích & Gợi Ý Shorts'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Instruction input */}
+            <div className="flex items-center gap-2 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+              <span className="text-[11px] text-slate-400 shrink-0 font-medium">Lưu ý chỉ đạo AI (Tùy chọn):</span>
+              <input
+                type="text"
+                value={customShortsInstruction}
+                onChange={e => setCustomShortsInstruction(e.target.value)}
+                placeholder="Ví dụ: Tập trung vào đoạn đối lập ảo tưởng vs sự thật, ưu tiên câu hỏi gây sốc..."
+                className="bg-transparent text-xs text-slate-200 focus:outline-none flex-1 placeholder:text-slate-600"
+              />
+            </div>
+
+            {/* Shorts Candidates & Rendered Clips Grid */}
+            {(!currentProject?.shorts_candidates || currentProject.shorts_candidates.length === 0) ? (
+              <div className="p-8 text-center bg-slate-950/40 rounded-xl border border-slate-800/60 space-y-2">
+                <Scissors className="w-10 h-10 mx-auto text-amber-500/40 animate-pulse" />
+                <p className="text-xs text-slate-400 font-medium">Chưa có phân đoạn Shorts nào được trích xuất.</p>
+                <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                  Bấm nút <strong className="text-amber-400">"⚡ Phân Tích & Gợi Ý Shorts"</strong> ở trên để AI tự động phát hiện 2–4 đoạn cao trào độc lập (50–60s) chuẩn chủ đề và bùng nổ tương tác.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {currentProject.shorts_candidates.map((cand, idx) => {
+                  const renderedShort = (currentProject.shorts || []).find(s => s.id === cand.id)
+                  const isThisRendering = renderingShortId === cand.id
+
+                  return (
+                    <Card key={cand.id || idx} className="p-4 bg-slate-950 border border-slate-800/90 rounded-xl flex flex-col justify-between space-y-3.5 hover:border-amber-500/40 transition-colors">
+                      {/* Top Header */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge variant="outline" className="bg-amber-500/10 text-amber-300 border-amber-500/30 text-[10px] font-bold flex items-center gap-1">
+                            <Flame className="w-3 h-3 text-amber-400" /> Điểm Viral: {cand.virality_score}/100
+                          </Badge>
+                          <Badge variant="outline" className="bg-slate-900 text-slate-400 border-slate-800 text-[10px] font-mono">
+                            ⏱️ {cand.duration_s}s
+                          </Badge>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-start justify-between gap-1.5">
+                            <h4 className="text-xs font-bold text-slate-100 line-clamp-2 flex-1 leading-snug" title={cand.title}>
+                              {cand.title}
+                            </h4>
+                            <button
+                              onClick={() => handleCopyText(cand.title, `title_${cand.id}`)}
+                              className="text-slate-400 hover:text-amber-300 p-1 rounded hover:bg-slate-900 shrink-0 transition-colors"
+                              title="Sao chép tiêu đề Short"
+                            >
+                              {copiedField === `title_${cand.id}` ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Short Description */}
+                        {cand.description && (
+                          <div className="bg-slate-900/90 p-2 rounded-lg border border-slate-800/80 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-semibold text-amber-400/90 flex items-center gap-1">
+                                📝 Mô tả Short
+                              </span>
+                              <button
+                                onClick={() => handleCopyText(cand.description!, `desc_${cand.id}`)}
+                                className="text-[10px] text-slate-400 hover:text-amber-300 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-800 transition-colors"
+                              >
+                                {copiedField === `desc_${cand.id}` ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                    <span className="text-emerald-400 text-[9px] font-medium">Đã copy</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span className="text-[9px]">Copy mô tả</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-slate-300 line-clamp-3 leading-relaxed">
+                              {cand.description}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Hashtags */}
+                        {cand.hashtags && cand.hashtags.length > 0 && (
+                          <div className="flex items-center justify-between gap-1">
+                            <div className="flex flex-wrap gap-1">
+                              {cand.hashtags.slice(0, 4).map((tag, tIdx) => (
+                                <span key={tIdx} className="text-[9px] font-mono text-cyan-400/90 bg-cyan-950/40 border border-cyan-800/40 px-1.5 py-0.2 rounded">
+                                  {tag.startsWith('#') ? tag : `#${tag}`}
+                                </span>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => handleCopyText(cand.hashtags!.join(' '), `tags_${cand.id}`)}
+                              className="text-slate-400 hover:text-cyan-300 p-1 rounded hover:bg-slate-900 shrink-0 transition-colors"
+                              title="Sao chép toàn bộ hashtag"
+                            >
+                              {copiedField === `tags_${cand.id}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="text-[11px] text-slate-400 space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-slate-500">
+                            <span>Phân cảnh #{cand.start_scene_id} ➔ #{cand.end_scene_id}</span>
+                            <span>{cand.start_s.toFixed(1)}s - {cand.end_s.toFixed(1)}s</span>
+                          </div>
+                          {cand.hook_reason && (
+                            <p className="text-[10px] text-slate-400 italic line-clamp-2 bg-slate-900/60 p-1.5 rounded border border-slate-800/60">
+                              💡 {cand.hook_reason}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Video Player or Thumbnail Preview */}
+                      <div className="aspect-[9/16] w-full max-w-[200px] mx-auto bg-black rounded-xl border border-slate-800 overflow-hidden relative flex items-center justify-center">
+                        {renderedShort?.video_url ? (
+                          <video
+                            key={renderedShort.video_url}
+                            controls
+                            playsInline
+                            src={renderedShort.video_url}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : isThisRendering ? (
+                          <div className="text-center p-4 text-amber-400 space-y-2 animate-pulse">
+                            <RotateCw className="w-6 h-6 mx-auto animate-spin" />
+                            <div className="text-[10px] font-semibold">Đang render 9:16...</div>
+                            <div className="text-[9px] text-slate-500">Ghép video & giọng đọc</div>
+                          </div>
+                        ) : (
+                          <div className="text-center p-3 text-slate-600 space-y-1.5">
+                            <Smartphone className="w-8 h-8 mx-auto opacity-30" />
+                            <div className="text-[10px] text-slate-400">Chưa render video</div>
+                            <div className="text-[9px] text-slate-600">Bấm nút bên dưới để tạo MP4</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                        {renderedShort?.video_url ? (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={renderedShort.video_url}
+                                download={`${cand.id}_short.mp4`}
+                                className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-medium transition-colors"
+                              >
+                                <Download className="w-3.5 h-3.5" /> Tải Short MP4
+                              </a>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleDeleteShort(cand.id)}
+                                className="h-7 px-2 text-rose-400 hover:text-rose-300 hover:bg-rose-950/30"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleRenderShort(cand.id)}
+                              disabled={isThisRendering || isBatchRenderingShorts}
+                              className="w-full h-6 text-[10px] border-slate-800 text-slate-400 hover:text-white"
+                            >
+                              <RotateCw className="w-3 h-3 mr-1" /> Render Lại Short
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => handleRenderShort(cand.id)}
+                            disabled={isThisRendering || isBatchRenderingShorts}
+                            className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium text-xs gap-1.5 h-8 shadow"
+                          >
+                            <Play className={`w-3.5 h-3.5 ${isThisRendering ? 'animate-spin' : ''}`} />
+                            {isThisRendering ? 'Đang Ghép...' : 'Render Short Này (9:16)'}
+                          </Button>
+                        )}
+
+                        {/* Hashtags display */}
+                        {cand.hashtags && cand.hashtags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {cand.hashtags.map((h, i) => (
+                              <span key={i} className="text-[9px] text-slate-500 font-mono bg-slate-900 px-1 rounded">
+                                {h}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
       </div>
 
       {/* ── Hidden Scene Audio Player (Stage 4 & 5 timestamp check) ── */}
