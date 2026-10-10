@@ -38,11 +38,53 @@ import {
   Scissors,
   Flame,
   Smartphone,
+  Globe,
+  Sliders,
+  Tv,
+  ShieldCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { fetchAPI } from '@/api/client'
+
+export interface ChannelItem {
+  id: string
+  name: string
+  handle?: string
+  title_prefix?: string
+  description?: string
+  niche?: string
+  character_image_url?: string
+  hero_lock?: string
+  video_count?: number
+  created_at?: number
+  updated_at?: number
+  character_settings?: {
+    character_name?: string
+    character_image_url?: string
+    character_media_id?: string
+    hero_lock?: string
+    flow_project_id?: string
+  }
+  prompt_templates?: {
+    scene_prefix?: string
+    scene_suffix_no_text?: string
+    scene_suffix_concept_card?: string
+    ai_director_system_prompt?: string
+  }
+  tts_preset?: {
+    provider?: string
+    voice_id?: string
+    speed?: number
+    model?: string
+  }
+  browser_profile?: {
+    profile_dir?: string
+    proxy?: string
+    last_opened_at?: number
+  }
+}
 
 interface SceneItem {
   id: number
@@ -138,9 +180,15 @@ interface StoryProject {
   thumbnail_url?: string
   thumbnail_watermark_removed?: boolean
   thumbnail_hook_text?: string
-  thumbnail_text_burned?: boolean
   shorts_candidates?: ShortItem[]
   shorts?: ShortItem[]
+  channel_id?: string
+  prompt_config?: {
+    scene_prefix?: string
+    scene_suffix_no_text?: string
+    scene_suffix_concept_card?: string
+    ai_director_system_prompt?: string
+  }
 }
 
 export interface PromptStyleInfo {
@@ -305,6 +353,32 @@ export default function StoryStudioPage() {
   const [aiModel, setAiModel] = useState<string>(() => localStorage.getItem('fk_story_ai_model') || 'ag/gemini-3.8-flash-high')
   const [showAiPromptConfig, setShowAiPromptConfig] = useState<boolean>(false)
 
+  // Channel Management State
+  const [channels, setChannels] = useState<ChannelItem[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState<string>(() => localStorage.getItem('fk_selected_channel_id') || 'all')
+  const [activeChannelDetail, setActiveChannelDetail] = useState<ChannelItem | null>(null)
+  const [showChannelSettingsModal, setShowChannelSettingsModal] = useState<boolean>(false)
+  const [channelSettingsTab, setChannelSettingsTab] = useState<'info' | 'character' | 'prompts' | 'tts' | 'browser'>('info')
+  const [channelEditForm, setChannelEditForm] = useState<any>({})
+  const [isSavingChannel, setIsSavingChannel] = useState<boolean>(false)
+  const [isOpeningBrowser, setIsOpeningBrowser] = useState<boolean>(false)
+  const [browserIsOpen, setBrowserIsOpen] = useState<boolean>(false)
+  const [browserPort, setBrowserPort] = useState<number>(9222)
+  const [showCreateChannelModal, setShowCreateChannelModal] = useState<boolean>(false)
+  const [newChannelName, setNewChannelName] = useState<string>('')
+  const [newChannelPrefix, setNewChannelPrefix] = useState<string>('')
+  const [newChannelNiche, setNewChannelNiche] = useState<string>('brain_psychology')
+  const [isCreatingChannel, setIsCreatingChannel] = useState<boolean>(false)
+  const [isUploadingChannelChar, setIsUploadingChannelChar] = useState<boolean>(false)
+
+  // Per-project Prompt Overrides State (Scene Prefix, Suffix No Text, Suffix Concept Card, AI Director System Prompt)
+  const [showPromptOverrides, setShowPromptOverrides] = useState<boolean>(false)
+  const [projectScenePrefix, setProjectScenePrefix] = useState<string>('')
+  const [projectSceneSuffixNoText, setProjectSceneSuffixNoText] = useState<string>('')
+  const [projectSceneSuffixConcept, setProjectSceneSuffixConcept] = useState<string>('')
+  const [projectSystemPrompt, setProjectSystemPrompt] = useState<string>('')
+  const [isSavingPromptConfig, setIsSavingPromptConfig] = useState<boolean>(false)
+
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   // Save keys & batch settings to localStorage
@@ -345,25 +419,245 @@ export default function StoryStudioPage() {
     }
   }, [])
 
-  // Load projects list
-  const loadProjects = async () => {
+  // Load channels and projects
+  const loadProjects = async (targetChannelId?: string) => {
     try {
-      const data = await fetchAPI<{ projects: any[] }>('/api/story-studio/projects')
+      const chId = targetChannelId !== undefined ? targetChannelId : selectedChannelId
+      const url = chId && chId !== 'all'
+        ? `/api/story-studio/projects?channel_id=${chId}`
+        : '/api/story-studio/projects'
+      const data = await fetchAPI<{ projects: any[] }>(url)
       setProjects(data.projects || [])
       if (!currentProject && data.projects?.length > 0) {
         setSelectedProjectId(data.projects[0].id)
         loadProjectDetail(data.projects[0].id)
-      } else if (!currentProject && data.projects?.length === 0) {
-        createNewProject('Câu Chuyện Mới')
+      } else if (currentProject && !data.projects.some(p => p.id === currentProject.id)) {
+        if (data.projects.length > 0) {
+          setSelectedProjectId(data.projects[0].id)
+          loadProjectDetail(data.projects[0].id)
+        } else {
+          setCurrentProject(null)
+          setSelectedProjectId('')
+        }
       }
     } catch (e: any) {
       console.error('Failed to load projects', e)
     }
   }
 
+  const loadChannels = async () => {
+    try {
+      const res = await fetchAPI<{ channels: ChannelItem[] }>('/api/story-studio/channels')
+      const chList = res.channels || []
+      setChannels(chList)
+      
+      const effectiveCid = selectedChannelId !== 'all' && chList.some(c => c.id === selectedChannelId)
+        ? selectedChannelId
+        : (chList[0]?.id || 'channel_k1')
+      
+      if (selectedChannelId !== 'all') {
+        loadChannelDetail(effectiveCid)
+      }
+    } catch (e) {
+      console.error('Failed to load channels', e)
+    }
+  }
+
+  const loadChannelDetail = async (cid: string) => {
+    try {
+      const ch = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${cid}`)
+      setActiveChannelDetail(ch)
+      setChannelEditForm(JSON.parse(JSON.stringify(ch)))
+      checkBrowserStatus(cid)
+    } catch (e) {
+      console.error('Failed to load channel detail', e)
+    }
+  }
+
+  const checkBrowserStatus = async (cid: string) => {
+    try {
+      const res = await fetchAPI<{ is_open: boolean; port: number }>(`/api/story-studio/channels/${cid}/browser-status`)
+      setBrowserIsOpen(res.is_open)
+      setBrowserPort(res.port)
+    } catch {
+      setBrowserIsOpen(false)
+    }
+  }
+
   useEffect(() => {
-    loadProjects()
+    loadChannels()
+    loadProjects(selectedChannelId)
   }, [])
+
+  useEffect(() => {
+    if (!activeChannelDetail?.id) return
+    const interval = setInterval(() => {
+      checkBrowserStatus(activeChannelDetail.id)
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [activeChannelDetail?.id])
+
+  const handleSwitchChannel = async (cid: string) => {
+    setSelectedChannelId(cid)
+    localStorage.setItem('fk_selected_channel_id', cid)
+    if (cid !== 'all') {
+      await loadChannelDetail(cid)
+    } else {
+      setActiveChannelDetail(null)
+      setBrowserIsOpen(false)
+    }
+    await loadProjects(cid)
+  }
+
+  const handleOpenChannelBrowser = async (cid?: string) => {
+    const targetCid = cid || (selectedChannelId !== 'all' ? selectedChannelId : activeChannelDetail?.id)
+    if (!targetCid || targetCid === 'all') {
+      setStatusMsg({ type: 'err', text: 'Vui lòng chọn 1 kênh cụ thể trong danh sách để mở profile trình duyệt!' })
+      return
+    }
+    try {
+      setIsOpeningBrowser(true)
+      setStatusMsg({ type: 'ok', text: 'Đang mở cửa sổ Chrome YouTube Studio với Profile riêng biệt (DrissionPage anti-detect)...' })
+      const res = await fetchAPI<any>(`/api/story-studio/channels/${targetCid}/open-browser`, {
+        method: 'POST',
+      })
+      setBrowserIsOpen(true)
+      setStatusMsg({
+        type: 'ok',
+        text: `Đã mở cửa sổ Chrome cho kênh (Port ${res.debug_port || browserPort})! Profile độc lập, an toàn tuyệt đối.`,
+      })
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi khi mở trình duyệt kênh' })
+    } finally {
+      setIsOpeningBrowser(false)
+    }
+  }
+
+  const handleSaveChannelSettings = async () => {
+    if (!activeChannelDetail) return
+    try {
+      setIsSavingChannel(true)
+      const res = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${activeChannelDetail.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(channelEditForm),
+      })
+      setActiveChannelDetail(res)
+      setChannelEditForm(JSON.parse(JSON.stringify(res)))
+      await loadChannels()
+      setShowChannelSettingsModal(false)
+      setStatusMsg({ type: 'ok', text: `Đã lưu cài đặt cho kênh "${res.name}"!` })
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi khi lưu cài đặt kênh' })
+    } finally {
+      setIsSavingChannel(false)
+    }
+  }
+
+  const handleUploadChannelCharacter = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0] || !activeChannelDetail) return
+    const file = e.target.files[0]
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      setIsUploadingChannelChar(true)
+      const res = await fetchAPI<any>(`/api/story-studio/channels/${activeChannelDetail.id}/character`, {
+        method: 'POST',
+        body: formData,
+      })
+      setActiveChannelDetail(prev => prev ? {
+        ...prev,
+        character_image_url: res.character_image_url,
+        character_settings: {
+          ...(prev.character_settings || {}),
+          character_image_url: res.character_image_url,
+          hero_lock: res.hero_lock || prev.character_settings?.hero_lock,
+        }
+      } : null)
+      setChannelEditForm((prev: any) => ({
+        ...prev,
+        character_settings: {
+          ...(prev.character_settings || {}),
+          character_image_url: res.character_image_url,
+        }
+      }))
+      await loadChannels()
+      setStatusMsg({ type: 'ok', text: 'Tải ảnh nhân vật tham chiếu kênh thành công!' })
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi tải ảnh nhân vật kênh' })
+    } finally {
+      setIsUploadingChannelChar(false)
+    }
+  }
+
+  const handleCreateChannel = async () => {
+    if (!newChannelName.trim()) {
+      setStatusMsg({ type: 'err', text: 'Tên kênh không được để trống' })
+      return
+    }
+    try {
+      setIsCreatingChannel(true)
+      const res = await fetchAPI<ChannelItem>('/api/story-studio/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newChannelName.trim(),
+          title_prefix: newChannelPrefix.trim() || undefined,
+          niche: newChannelNiche,
+        }),
+      })
+      await loadChannels()
+      setSelectedChannelId(res.id)
+      localStorage.setItem('fk_selected_channel_id', res.id)
+      await loadChannelDetail(res.id)
+      await loadProjects(res.id)
+      setShowCreateChannelModal(false)
+      setNewChannelName('')
+      setNewChannelPrefix('')
+      setStatusMsg({ type: 'ok', text: `Tạo kênh mới "${res.name}" thành công!` })
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi tạo kênh mới' })
+    } finally {
+      setIsCreatingChannel(false)
+    }
+  }
+
+  const handleSavePromptConfig = async () => {
+    if (!currentProject) return
+    try {
+      setIsSavingPromptConfig(true)
+      const pCfg = {
+        scene_prefix: projectScenePrefix,
+        scene_suffix_no_text: projectSceneSuffixNoText,
+        scene_suffix_concept_card: projectSceneSuffixConcept,
+        ai_director_system_prompt: projectSystemPrompt,
+      }
+      await fetchAPI<StoryProject>(`/api/story-studio/projects/${currentProject.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt_config: pCfg }),
+      })
+      setCurrentProject(prev => prev ? { ...prev, prompt_config: pCfg } : null)
+      setStatusMsg({ type: 'ok', text: 'Đã lưu cấu hình Prefix / Suffix tùy biến cho tập này!' })
+    } catch (e: any) {
+      setStatusMsg({ type: 'err', text: e.message || 'Lỗi lưu cấu hình prompt' })
+    } finally {
+      setIsSavingPromptConfig(false)
+    }
+  }
+
+  const handleResetPromptConfigToChannel = () => {
+    const ch = activeChannelDetail || channels.find(c => c.id === currentProject?.channel_id)
+    if (ch?.prompt_templates) {
+      setProjectScenePrefix(ch.prompt_templates.scene_prefix || '')
+      setProjectSceneSuffixNoText(ch.prompt_templates.scene_suffix_no_text || '')
+      setProjectSceneSuffixConcept(ch.prompt_templates.scene_suffix_concept_card || '')
+      setProjectSystemPrompt(ch.prompt_templates.ai_director_system_prompt || '')
+      setStatusMsg({ type: 'ok', text: `Đã khôi phục Prefix/Suffix theo mặc định của kênh "${ch.name}"!` })
+    } else {
+      setStatusMsg({ type: 'err', text: 'Kênh chưa có mẫu prompt mặc định' })
+    }
+  }
 
   const loadProjectDetail = async (id: string) => {
     setSelectedProjectId(id)
@@ -406,6 +700,18 @@ export default function StoryStudioPage() {
       if (proj.ken_burns !== undefined) {
         setKenBurns(Boolean(proj.ken_burns))
       }
+
+      // Populate prompt_config overrides
+      const pCfg = proj.prompt_config || {}
+      setProjectScenePrefix(pCfg.scene_prefix || '')
+      setProjectSceneSuffixNoText(pCfg.scene_suffix_no_text || '')
+      setProjectSceneSuffixConcept(pCfg.scene_suffix_concept_card || '')
+      setProjectSystemPrompt(pCfg.ai_director_system_prompt || '')
+
+      if (proj.channel_id && (!activeChannelDetail || activeChannelDetail.id !== proj.channel_id)) {
+        loadChannelDetail(proj.channel_id)
+      }
+
       setActiveStage(proj.current_stage || 1)
       setStatusMsg(null)
     } catch (e: any) {
@@ -419,22 +725,26 @@ export default function StoryStudioPage() {
   const createNewProject = async (customTitle?: string) => {
     try {
       setLoading(true)
+      const effectiveCid = selectedChannelId !== 'all' ? selectedChannelId : (channels[0]?.id || 'channel_k1')
+      const ch = channels.find(c => c.id === effectiveCid)
+      const prefix = ch?.title_prefix ? `${ch.title_prefix} ` : ''
       const newProj = await fetchAPI<StoryProject>('/api/story-studio/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: customTitle || `Dự án Story ${new Date().toLocaleDateString('vi-VN')}`,
+          channel_id: effectiveCid,
+          title: customTitle || `${prefix}Dự án Story ${new Date().toLocaleDateString('vi-VN')}`,
           keyword: topic || '',
           hero_lock: heroLock || undefined,
-          prompt_style: promptStyle || 'forgotten_civilizations',
+          prompt_style: promptStyle || (ch?.niche === 'ancient_humans' ? 'ancient_humans' : 'brain_psychology'),
           background_mode: backgroundMode || 'dynamic',
           topic_requirements: topicRequirements || '',
         }),
       })
-      await loadProjects()
+      await loadProjects(effectiveCid)
       setCurrentProject(newProj)
       setActiveStage(1)
-      setStatusMsg({ type: 'ok', text: 'Đã tạo dự án mới thành công!' })
+      setStatusMsg({ type: 'ok', text: `Đã tạo dự án mới cho kênh "${ch?.name || effectiveCid}"!` })
     } catch (e: any) {
       setStatusMsg({ type: 'err', text: e.message || 'Lỗi khi tạo dự án' })
     } finally {
@@ -952,6 +1262,10 @@ export default function StoryStudioPage() {
           background_mode: backgroundMode,
           topic_requirements: topicRequirements,
           chaining_mode: chainingMode,
+          custom_prefix: projectScenePrefix.trim() || undefined,
+          custom_suffix_no_text: projectSceneSuffixNoText.trim() || undefined,
+          custom_suffix_concept: projectSceneSuffixConcept.trim() || undefined,
+          custom_system_prompt: projectSystemPrompt.trim() || undefined,
         }),
       })
       setCurrentProject(prev => prev ? {
@@ -961,6 +1275,12 @@ export default function StoryStudioPage() {
         background_mode: backgroundMode,
         topic_requirements: topicRequirements,
         chaining_mode: chainingMode,
+        prompt_config: {
+          scene_prefix: projectScenePrefix,
+          scene_suffix_no_text: projectSceneSuffixNoText,
+          scene_suffix_concept_card: projectSceneSuffixConcept,
+          ai_director_system_prompt: projectSystemPrompt,
+        },
       } : null)
       setPromptStyle(activeStyle)
       const matched = PROMPT_STYLES.find(s => s.id === activeStyle)
@@ -1006,6 +1326,9 @@ export default function StoryStudioPage() {
           topic_requirements: topicRequirements,
           script_text: currentProject.script_text || scriptText || '',
           chaining_mode: chainingMode,
+          custom_prefix: projectScenePrefix.trim() || undefined,
+          custom_suffix: projectSceneSuffixNoText.trim() || undefined,
+          custom_system_prompt: projectSystemPrompt.trim() || undefined,
         }),
       })
 
@@ -1016,6 +1339,12 @@ export default function StoryStudioPage() {
         background_mode: backgroundMode,
         topic_requirements: topicRequirements,
         chaining_mode: chainingMode,
+        prompt_config: {
+          scene_prefix: projectScenePrefix,
+          scene_suffix_no_text: projectSceneSuffixNoText,
+          scene_suffix_concept_card: projectSceneSuffixConcept,
+          ai_director_system_prompt: projectSystemPrompt,
+        },
       } : null)
       setPromptStyle(activeStyle)
       setStatusMsg({
@@ -1678,100 +2007,178 @@ export default function StoryStudioPage() {
 
   return (
     <div className="flex flex-col min-h-screen p-6 max-w-7xl mx-auto space-y-6 text-slate-100">
-      {/* ── Top Bar & Project Selector ────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-orange-600/30 rounded-xl border border-amber-500/30 shadow-lg shadow-amber-500/10">
-            <Sparkles className="w-6 h-6 text-amber-400" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight flex items-center gap-2">
-              Doodle Story Studio
-            </h1>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Quy trình khép kín: Nhân vật tham chiếu ➔ Kịch bản LLM ➔ Giọng đọc Minimax ➔ Transcript ➔ Ảnh Doodle ➔ Ghép Video
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          {isEditingTitle ? (
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-amber-500/60 rounded-lg px-2.5 py-1 shadow-md shadow-amber-500/10">
-              <input
-                type="text"
-                value={editTitleInput}
-                onChange={e => setEditTitleInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleSaveTitle()
-                  if (e.key === 'Escape') handleCancelEditTitle()
-                }}
-                autoFocus
-                placeholder="Nhập tên dự án..."
-                className="bg-transparent text-xs text-slate-100 focus:outline-none w-48 sm:w-64 font-medium"
-              />
-              <Button
-                size="sm"
-                onClick={handleSaveTitle}
-                disabled={isSavingTitle}
-                className="h-6 px-2 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] gap-1"
-              >
-                <Check className="w-3 h-3" /> Lưu
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleCancelEditTitle}
-                className="h-6 px-1.5 text-slate-400 hover:text-white text-[11px]"
-              >
-                <X className="w-3 h-3" />
-              </Button>
+      {/* ── Top Bar & Channel / Project Selector ────────────────────────────── */}
+      <div className="flex flex-col gap-3 pb-4 border-b border-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-orange-600/30 rounded-xl border border-amber-500/30 shadow-lg shadow-amber-500/10">
+              <Sparkles className="w-6 h-6 text-amber-400" />
             </div>
-          ) : (
-            projects.length > 0 && (
-              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-lg p-1">
-                <select
-                  value={currentProject?.id || selectedProjectId || (projects[0]?.id ?? '')}
-                  onChange={e => loadProjectDetail(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[200px] sm:max-w-[260px] truncate font-medium text-slate-200"
-                >
-                  {projects.map(p => (
-                    <option key={p.id} value={p.id}>{p.title}</option>
-                  ))}
-                </select>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold tracking-tight">
+                  Doodle Story Studio
+                </h1>
+                <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px] bg-amber-500/10 font-mono">
+                  YouTube Channel Mode
+                </Badge>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Quản lý theo Kênh YouTube • Profile DrissionPage độc lập • Khóa nhân vật & Template đồng bộ
+              </p>
+            </div>
+          </div>
 
-                {currentProject && (
+          {/* Channel Bar Controls */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg p-1">
+              <span className="text-[11px] text-slate-400 pl-2 font-medium flex items-center gap-1">
+                <Tv className="w-3.5 h-3.5 text-amber-400" /> Kênh:
+              </span>
+              <select
+                value={selectedChannelId}
+                onChange={e => handleSwitchChannel(e.target.value)}
+                className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[210px] truncate font-semibold text-amber-300"
+              >
+                <option value="all">📂 Tất cả kênh ({projects.length} tập)</option>
+                {channels.map(ch => (
+                  <option key={ch.id} value={ch.id}>
+                    📺 {ch.name} ({ch.video_count ?? 0} tập)
+                  </option>
+                ))}
+              </select>
+
+              {activeChannelDetail && selectedChannelId !== 'all' && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleOpenChannelBrowser(activeChannelDetail.id)}
+                    disabled={isOpeningBrowser}
+                    className={`h-7 px-2.5 text-xs gap-1.5 font-medium border-slate-700 transition-colors ${
+                      browserIsOpen
+                        ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 hover:bg-emerald-900/60'
+                        : 'bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800'
+                    }`}
+                    title={`Mở Chrome với User Data Profile độc lập cho kênh ${activeChannelDetail.name} (DrissionPage anti-detect)`}
+                  >
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${browserIsOpen ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                    <Globe className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>{isOpeningBrowser ? 'Đang mở...' : 'Mở Profile Kênh'}</span>
+                  </Button>
+
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={handleStartEditTitle}
-                    title="Sửa tên dự án này"
-                    className="h-7 px-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 text-xs gap-1"
+                    onClick={() => {
+                      setChannelEditForm(JSON.parse(JSON.stringify(activeChannelDetail)))
+                      setShowChannelSettingsModal(true)
+                    }}
+                    className="h-7 px-2 text-slate-400 hover:text-amber-300 hover:bg-slate-800 text-xs gap-1"
+                    title="Cài đặt thông tin kênh, nhân vật đại diện, prompt template, giọng đọc"
                   >
-                    <Pencil className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Sửa tên</span>
+                    <Settings className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Cài Đặt Kênh</span>
                   </Button>
-                )}
+                </>
+              )}
 
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowCreateChannelModal(true)}
+                className="h-7 px-2 text-slate-400 hover:text-white hover:bg-slate-800 text-xs gap-1"
+                title="Tạo kênh YouTube mới"
+              >
+                <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden md:inline">Thêm Kênh</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Video / Project Selector Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/60">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] text-slate-400 font-medium">Tập Video:</span>
+            {isEditingTitle ? (
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-amber-500/60 rounded-lg px-2.5 py-1 shadow-md shadow-amber-500/10">
+                <input
+                  type="text"
+                  value={editTitleInput}
+                  onChange={e => setEditTitleInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleSaveTitle()
+                    if (e.key === 'Escape') handleCancelEditTitle()
+                  }}
+                  autoFocus
+                  placeholder="Nhập tên dự án..."
+                  className="bg-transparent text-xs text-slate-100 focus:outline-none w-48 sm:w-64 font-medium"
+                />
+                <Button
+                  size="sm"
+                  onClick={handleSaveTitle}
+                  disabled={isSavingTitle}
+                  className="h-6 px-2 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] gap-1"
+                >
+                  <Check className="w-3 h-3" /> Lưu
+                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setShowDeleteModal(true)}
-                  title="Xóa dự án này"
-                  className="h-7 px-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 text-xs gap-1"
+                  onClick={handleCancelEditTitle}
+                  className="h-6 px-1.5 text-slate-400 hover:text-white text-[11px]"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Xóa</span>
+                  <X className="w-3 h-3" />
                 </Button>
               </div>
-            )
-          )}
+            ) : (
+              projects.length > 0 && (
+                <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-lg p-1">
+                  <select
+                    value={currentProject?.id || selectedProjectId || (projects[0]?.id ?? '')}
+                    onChange={e => loadProjectDetail(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[200px] sm:max-w-[320px] truncate font-medium text-slate-200"
+                  >
+                    {projects.map(p => (
+                      <option key={p.id} value={p.id}>{p.title}</option>
+                    ))}
+                  </select>
+
+                  {currentProject && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={handleStartEditTitle}
+                      title="Sửa tên dự án này"
+                      className="h-7 px-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 text-xs gap-1"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Sửa tên</span>
+                    </Button>
+                  )}
+
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowDeleteModal(true)}
+                    title="Xóa dự án này"
+                    className="h-7 px-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 text-xs gap-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Xóa</span>
+                  </Button>
+                </div>
+              )
+            )}
+          </div>
 
           <Button
             size="sm"
             onClick={() => createNewProject()}
-            className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 shrink-0"
+            className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 shrink-0 font-medium"
           >
-            <Plus className="w-3.5 h-3.5" /> Tạo Dự Án Mới
+            <Plus className="w-3.5 h-3.5" /> Tạo Video Mới {activeChannelDetail && selectedChannelId !== 'all' ? `(${activeChannelDetail.title_prefix || activeChannelDetail.name.split('—')[0].trim()})` : ''}
           </Button>
         </div>
       </div>
@@ -2718,6 +3125,115 @@ export default function StoryStudioPage() {
                         2. Mạch phim liên kết AI (Mới)
                       </button>
                     </div>
+                  </div>
+
+                  {/* Per-Project Prompt Overrides Accordion */}
+                  <div className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-lg space-y-3">
+                    <div className="flex items-center justify-between cursor-pointer" onClick={() => setShowPromptOverrides(!showPromptOverrides)}>
+                      <div className="flex items-center gap-2">
+                        <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="text-xs font-semibold text-slate-200">
+                          ⚙️ Tùy Biến Mẫu Prompt / Prefix / Suffix Cho Tập Này (Overrides)
+                        </span>
+                        {(projectScenePrefix || projectSceneSuffixNoText || projectSceneSuffixConcept || projectSystemPrompt) && (
+                          <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px] bg-amber-500/10">
+                            Đã Tùy Biến
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-400">
+                          {showPromptOverrides ? 'Thu gọn' : 'Mở rộng tùy chỉnh'}
+                        </span>
+                        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showPromptOverrides ? 'rotate-180' : ''}`} />
+                      </div>
+                    </div>
+
+                    {showPromptOverrides && (
+                      <div className="space-y-3 pt-2 border-t border-slate-800">
+                        <p className="text-[11px] text-slate-400">
+                          Mặc định tập này sẽ nhận mẫu prompt từ <span className="text-amber-300 font-semibold">{activeChannelDetail?.name || 'Kênh'}</span>. Bạn có thể sửa trực tiếp bên dưới để chỉ áp dụng cho riêng tập này mà không ảnh hưởng toàn kênh.
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-slate-300 flex items-center justify-between">
+                              <span>Tiền tố từng cảnh (Scene Prefix):</span>
+                              <span className="text-[10px] text-slate-500">Đầu câu prompt</span>
+                            </label>
+                            <textarea
+                              rows={2}
+                              value={projectScenePrefix}
+                              onChange={e => setProjectScenePrefix(e.target.value)}
+                              placeholder={activeChannelDetail?.prompt_templates?.scene_prefix || "Ví dụ: Hand-drawn educational 2D black whiteboard doodle..."}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-slate-300 flex items-center justify-between">
+                              <span>Hậu tố cảnh thường (Suffix - No Text):</span>
+                              <span className="text-[10px] text-slate-500">Cấm chữ, giữ nhân vật</span>
+                            </label>
+                            <textarea
+                              rows={2}
+                              value={projectSceneSuffixNoText}
+                              onChange={e => setProjectSceneSuffixNoText(e.target.value)}
+                              placeholder={activeChannelDetail?.prompt_templates?.scene_suffix_no_text || "Ví dụ: , same character design, no text, no words..."}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-slate-300 flex items-center justify-between">
+                              <span>Hậu tố thẻ bài khái niệm (Suffix - Concept Card):</span>
+                              <span className="text-[10px] text-slate-500">Thẻ từ khóa / chữ đỏ</span>
+                            </label>
+                            <textarea
+                              rows={2}
+                              value={projectSceneSuffixConcept}
+                              onChange={e => setProjectSceneSuffixConcept(e.target.value)}
+                              placeholder={activeChannelDetail?.prompt_templates?.scene_suffix_concept_card || "Ví dụ: , same character design, bold red hand-drawn text..."}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-medium text-slate-300 flex items-center justify-between">
+                              <span>Prompt đạo diễn AI (Visual Director System Prompt):</span>
+                              <span className="text-[10px] text-slate-500">Chỉ đạo cho LLM</span>
+                            </label>
+                            <textarea
+                              rows={2}
+                              value={projectSystemPrompt}
+                              onChange={e => setProjectSystemPrompt(e.target.value)}
+                              placeholder={activeChannelDetail?.prompt_templates?.ai_director_system_prompt || "Chỉ đạo phong cách cho AI khi sinh prompt..."}
+                              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={handleResetPromptConfigToChannel}
+                            className="text-xs border-slate-700 text-slate-400 hover:text-white"
+                          >
+                            <RotateCw className="w-3.5 h-3.5" /> Khôi phục theo Kênh
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={handleSavePromptConfig}
+                            disabled={isSavingPromptConfig}
+                            className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1 font-medium"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            {isSavingPromptConfig ? 'Đang lưu...' : 'Lưu Tùy Biến Cho Tập Này'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Topic Mandatory Rules / Theme Requirements Panel */}
@@ -4116,6 +4632,554 @@ export default function StoryStudioPage() {
               alt="Preview"
               className="max-w-full max-h-[85vh] rounded-xl object-contain"
             />
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Tạo Kênh Mới ─────────────────────────────────────── */}
+      {showCreateChannelModal && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => !isCreatingChannel && setShowCreateChannelModal(false)}
+        >
+          <div
+            className="relative max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg">
+                  <Tv className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-slate-100">Tạo Kênh YouTube Mới</h3>
+                  <p className="text-[11px] text-slate-400">Tạo không gian quản lý kịch bản & profile trình duyệt riêng</p>
+                </div>
+              </div>
+              <button onClick={() => setShowCreateChannelModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-300">Tên Kênh (*):</label>
+                <input
+                  type="text"
+                  value={newChannelName}
+                  onChange={e => setNewChannelName(e.target.value)}
+                  placeholder="Ví dụ: Kênh 3 — Lịch Sử Tiến Hóa"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-300">Tiền Tố Tiêu Đề Video (Tự động gán):</label>
+                <input
+                  type="text"
+                  value={newChannelPrefix}
+                  onChange={e => setNewChannelPrefix(e.target.value)}
+                  placeholder="Ví dụ: K3 -"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-300">Chủ Đề & Phong Cách (Niche):</label>
+                <select
+                  value={newChannelNiche}
+                  onChange={e => setNewChannelNiche(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                >
+                  <option value="brain_psychology">🧠 Tâm Lý Học & Não Bộ (Brain Psychology)</option>
+                  <option value="ancient_humans">🌿 Con Người Cổ Đại & Sinh Tồn (Ancient Humans)</option>
+                  <option value="forgotten_civilizations">🏛️ Nền Văn Minh Bị Bỏ Quên (Forgotten Civilizations)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isCreatingChannel}
+                onClick={() => setShowCreateChannelModal(false)}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                Hủy bỏ
+              </Button>
+              <Button
+                size="sm"
+                disabled={isCreatingChannel || !newChannelName.trim()}
+                onClick={handleCreateChannel}
+                className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 font-medium"
+              >
+                {isCreatingChannel ? 'Đang tạo...' : 'Tạo Kênh'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Cài Đặt Kênh Toàn Diện ─────────────────────────── */}
+      {showChannelSettingsModal && activeChannelDetail && (
+        <div
+          className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => !isSavingChannel && setShowChannelSettingsModal(false)}
+        >
+          <div
+            className="relative max-w-3xl w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-xl border border-amber-500/30 text-amber-400">
+                  <Tv className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                    Cài Đặt Kênh: {activeChannelDetail.name}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    ID: <code className="text-amber-300 font-mono">{activeChannelDetail.id}</code> • {activeChannelDetail.video_count ?? 0} video tập
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowChannelSettingsModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Tabs Navigation */}
+            <div className="flex items-center gap-1 px-5 pt-3 border-b border-slate-800 bg-slate-950/40 overflow-x-auto">
+              <button
+                onClick={() => setChannelSettingsTab('info')}
+                className={`px-3 py-2 text-xs font-semibold rounded-t-lg transition-all flex items-center gap-1.5 border-b-2 ${
+                  channelSettingsTab === 'info'
+                    ? 'border-amber-500 text-amber-300 bg-slate-900/90'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" /> Thông Tin & DNA
+              </button>
+
+              <button
+                onClick={() => setChannelSettingsTab('character')}
+                className={`px-3 py-2 text-xs font-semibold rounded-t-lg transition-all flex items-center gap-1.5 border-b-2 ${
+                  channelSettingsTab === 'character'
+                    ? 'border-amber-500 text-amber-300 bg-slate-900/90'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" /> Nhân Vật Đại Diện
+              </button>
+
+              <button
+                onClick={() => setChannelSettingsTab('prompts')}
+                className={`px-3 py-2 text-xs font-semibold rounded-t-lg transition-all flex items-center gap-1.5 border-b-2 ${
+                  channelSettingsTab === 'prompts'
+                    ? 'border-amber-500 text-amber-300 bg-slate-900/90'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5" /> Mẫu Prompt Kênh
+              </button>
+
+              <button
+                onClick={() => setChannelSettingsTab('tts')}
+                className={`px-3 py-2 text-xs font-semibold rounded-t-lg transition-all flex items-center gap-1.5 border-b-2 ${
+                  channelSettingsTab === 'tts'
+                    ? 'border-amber-500 text-amber-300 bg-slate-900/90'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Mic className="w-3.5 h-3.5" /> Giọng Đọc Mặc Định
+              </button>
+
+              <button
+                onClick={() => setChannelSettingsTab('browser')}
+                className={`px-3 py-2 text-xs font-semibold rounded-t-lg transition-all flex items-center gap-1.5 border-b-2 ${
+                  channelSettingsTab === 'browser'
+                    ? 'border-amber-500 text-amber-300 bg-slate-900/90'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" /> Profile Trình Duyệt
+              </button>
+            </div>
+
+            {/* Modal Body / Tab Contents */}
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {/* TAB 1: THÔNG TIN & DNA */}
+              {channelSettingsTab === 'info' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Tên Kênh:</label>
+                      <input
+                        type="text"
+                        value={channelEditForm.name || ''}
+                        onChange={e => setChannelEditForm({ ...channelEditForm, name: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">YouTube Handle:</label>
+                      <input
+                        type="text"
+                        value={channelEditForm.handle || ''}
+                        onChange={e => setChannelEditForm({ ...channelEditForm, handle: e.target.value })}
+                        placeholder="@kenh_youtube"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Tiền Tố Tiêu Đề Mặc Định (Title Prefix):</label>
+                      <input
+                        type="text"
+                        value={channelEditForm.title_prefix || ''}
+                        onChange={e => setChannelEditForm({ ...channelEditForm, title_prefix: e.target.value })}
+                        placeholder="Ví dụ: K1 -"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Thể Loại (Niche):</label>
+                      <select
+                        value={channelEditForm.niche || 'brain_psychology'}
+                        onChange={e => setChannelEditForm({ ...channelEditForm, niche: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                      >
+                        <option value="brain_psychology">🧠 Tâm Lý Học Não Bộ (Brain Psychology)</option>
+                        <option value="ancient_humans">🌿 Con Người Cổ Đại & Sinh Tồn (Ancient Humans)</option>
+                        <option value="forgotten_civilizations">🏛️ Nền Văn Minh Bị Bỏ Quên (Forgotten Civilizations)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-300">Mô Tả & Tôn Chỉ Kênh (Channel DNA):</label>
+                    <textarea
+                      rows={3}
+                      value={channelEditForm.description || ''}
+                      onChange={e => setChannelEditForm({ ...channelEditForm, description: e.target.value })}
+                      placeholder="Mô tả định hướng nội dung và đối tượng khán giả..."
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: NHÂN VẬT ĐẠI DIỆN */}
+              {channelSettingsTab === 'character' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
+                    <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
+                      {channelEditForm.character_settings?.character_image_url || activeChannelDetail.character_image_url ? (
+                        <img
+                          src={channelEditForm.character_settings?.character_image_url || activeChannelDetail.character_image_url}
+                          alt="Character Reference"
+                          className="w-36 h-36 object-contain rounded-lg border border-amber-500/30 bg-slate-900"
+                        />
+                      ) : (
+                        <div className="w-36 h-36 rounded-lg border border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500">
+                          <User className="w-10 h-10 opacity-30 mb-2" />
+                          <span className="text-[11px]">Chưa có ảnh</span>
+                        </div>
+                      )}
+
+                      <label className="cursor-pointer">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isUploadingChannelChar}
+                          className="text-xs border-amber-500/40 text-amber-300 hover:bg-amber-950/40 gap-1.5 pointer-events-none"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          {isUploadingChannelChar ? 'Đang tải...' : 'Upload Ảnh Nhân Vật'}
+                        </Button>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleUploadChannelCharacter}
+                          disabled={isUploadingChannelChar}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="md:col-span-8 space-y-3">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-slate-300">
+                          Mô Tả Cố Định Nhân Vật (Hero Lock Anchor):
+                        </label>
+                        <p className="text-[11px] text-slate-400">
+                          Câu văn mô tả ngoại hình cố định (màu tóc, trang phục, đầu que...) được gán tự động vào mọi cảnh của video trong kênh này.
+                        </p>
+                        <textarea
+                          rows={4}
+                          value={channelEditForm.character_settings?.hero_lock || ''}
+                          onChange={e => setChannelEditForm({
+                            ...channelEditForm,
+                            character_settings: {
+                              ...(channelEditForm.character_settings || {}),
+                              hero_lock: e.target.value,
+                            }
+                          })}
+                          placeholder="The main stick figure character from the reference image..."
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: MẪU PROMPT KÊNH */}
+              {channelSettingsTab === 'prompts' && (
+                <div className="space-y-4">
+                  <div className="p-3 bg-amber-950/20 border border-amber-800/40 rounded-lg text-amber-300 text-xs">
+                    💡 <strong>Cơ chế kế thừa:</strong> Khi tạo một video mới trong kênh này, video sẽ tự động nhận các mẫu Prefix/Suffix bên dưới. Từng video vẫn có thể tùy biến đè lên mà không ảnh hưởng cấu hình gốc của kênh.
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">
+                        Tiền Tố Cảnh Mặc Định (Scene Prefix):
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={channelEditForm.prompt_templates?.scene_prefix || ''}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          prompt_templates: {
+                            ...(channelEditForm.prompt_templates || {}),
+                            scene_prefix: e.target.value,
+                          }
+                        })}
+                        placeholder="Hand-drawn educational 2D black whiteboard doodle animation..."
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">
+                        Hậu Tố Cảnh Thường (Scene Suffix - No Text):
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={channelEditForm.prompt_templates?.scene_suffix_no_text || ''}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          prompt_templates: {
+                            ...(channelEditForm.prompt_templates || {}),
+                            scene_suffix_no_text: e.target.value,
+                          }
+                        })}
+                        placeholder=", same character design as the reference image, no text, no words..."
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">
+                        Hậu Tố Thẻ Khái Niệm / Chữ Đỏ (Scene Suffix - Concept Card):
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={channelEditForm.prompt_templates?.scene_suffix_concept_card || ''}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          prompt_templates: {
+                            ...(channelEditForm.prompt_templates || {}),
+                            scene_suffix_concept_card: e.target.value,
+                          }
+                        })}
+                        placeholder=", same character design, bold red hand-drawn text..."
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">
+                        Prompt Chỉ Đạo Đạo Diễn AI (Visual Director System Prompt):
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={channelEditForm.prompt_templates?.ai_director_system_prompt || ''}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          prompt_templates: {
+                            ...(channelEditForm.prompt_templates || {}),
+                            ai_director_system_prompt: e.target.value,
+                          }
+                        })}
+                        placeholder="You are an expert visual director for 2D doodle YouTube explainer videos..."
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: GIỌNG ĐỌC TTS */}
+              {channelSettingsTab === 'tts' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Minimax Voice ID:</label>
+                      <input
+                        type="text"
+                        value={channelEditForm.tts_preset?.voice_id || 'male-qn-qingse'}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          tts_preset: {
+                            ...(channelEditForm.tts_preset || {}),
+                            voice_id: e.target.value,
+                          }
+                        })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Tốc Độ Đọc (Speed):</label>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0.5"
+                        max="2.0"
+                        value={channelEditForm.tts_preset?.speed || 1.0}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          tts_preset: {
+                            ...(channelEditForm.tts_preset || {}),
+                            speed: parseFloat(e.target.value),
+                          }
+                        })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300">Model TTS:</label>
+                      <input
+                        type="text"
+                        value={channelEditForm.tts_preset?.model || 'speech-02-turbo'}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          tts_preset: {
+                            ...(channelEditForm.tts_preset || {}),
+                            model: e.target.value,
+                          }
+                        })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 5: PROFILE TRÌNH DUYỆT ANTI-DETECT */}
+              {channelSettingsTab === 'browser' && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-5 h-5 text-cyan-400" />
+                        <div>
+                          <div className="text-xs font-bold text-slate-200">Trạng Thái Cửa Sổ Trình Duyệt:</div>
+                          <div className="text-[11px] text-slate-400">Profile độc lập chạy qua DrissionPage với CDP Port riêng biệt</div>
+                        </div>
+                      </div>
+                      <Badge className={browserIsOpen ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'}>
+                        {browserIsOpen ? '🟢 Đang Mở' : '⚪ Đang Đóng'}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs pt-2 border-t border-slate-800">
+                      <div>
+                        <span className="text-slate-400">Đường dẫn Profile:</span>
+                        <div className="font-mono text-[11px] text-amber-300 truncate mt-0.5">
+                          output/story_studio/browser_profiles/{activeChannelDetail.id}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">CDP Debugging Port:</span>
+                        <div className="font-mono text-[11px] text-cyan-300 mt-0.5">
+                          {browserPort}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-2">
+                      <label className="text-xs font-semibold text-slate-300">Proxy Cố Định Cho Kênh (Tùy chọn):</label>
+                      <input
+                        type="text"
+                        value={channelEditForm.browser_profile?.proxy || ''}
+                        onChange={e => setChannelEditForm({
+                          ...channelEditForm,
+                          browser_profile: {
+                            ...(channelEditForm.browser_profile || {}),
+                            proxy: e.target.value,
+                          }
+                        })}
+                        placeholder="http://user:password@ip:port (để trống nếu dùng IP máy)"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    <div className="pt-2">
+                      <Button
+                        size="sm"
+                        onClick={() => handleOpenChannelBrowser(activeChannelDetail.id)}
+                        disabled={isOpeningBrowser}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs gap-1.5 w-full font-semibold shadow-md"
+                      >
+                        <Globe className="w-4 h-4" />
+                        {isOpeningBrowser ? 'Đang mở Chrome...' : '🚀 Khởi Chạy Trình Duyệt Chrome Ngay (DrissionPage)'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between p-4 border-t border-slate-800 bg-slate-950/40">
+              <div className="text-[11px] text-slate-500">
+                Lưu lại sẽ cập nhật ngay lập tức cấu hình cho kênh này.
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={isSavingChannel}
+                  onClick={() => setShowChannelSettingsModal(false)}
+                  className="text-xs text-slate-400 hover:text-white"
+                >
+                  Đóng
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={isSavingChannel}
+                  onClick={handleSaveChannelSettings}
+                  className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 font-semibold"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {isSavingChannel ? 'Đang lưu...' : 'Lưu Cài Đặt Kênh'}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

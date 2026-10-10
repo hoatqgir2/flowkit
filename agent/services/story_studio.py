@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 STORY_STUDIO_DIR = OUTPUT_DIR / "story_studio"
 STORY_STUDIO_DIR.mkdir(parents=True, exist_ok=True)
 PROJECTS_FILE = STORY_STUDIO_DIR / "projects.json"
+CHANNELS_DIR = STORY_STUDIO_DIR / "channels"
+CHANNELS_DIR.mkdir(parents=True, exist_ok=True)
+CHANNELS_FILE = STORY_STUDIO_DIR / "channels.json"
 
 DEFAULT_HERO_LOCK = "The main stick figure character from the reference image"
 
@@ -160,6 +163,297 @@ def get_ffmpeg_path() -> str:
     return "ffmpeg"
 
 
+def get_channel_dir(channel_id: str) -> Path:
+    safe_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in channel_id)
+    cdir = CHANNELS_DIR / safe_name
+    cdir.mkdir(parents=True, exist_ok=True)
+    return cdir
+
+
+def load_channels_index() -> List[Dict[str, Any]]:
+    if not CHANNELS_FILE.exists():
+        return ensure_default_channels_and_migration()
+    try:
+        with open(CHANNELS_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not raw:
+            return ensure_default_channels_and_migration()
+        valid = []
+        for ch in raw:
+            cid = ch.get("id")
+            if cid and (CHANNELS_DIR / cid / "channel.json").exists():
+                valid.append(ch)
+        if not valid:
+            return ensure_default_channels_and_migration()
+        return valid
+    except Exception as e:
+        logger.error("Failed to load story studio channels: %s", e)
+        return ensure_default_channels_and_migration()
+
+
+def save_channels_index(channels: List[Dict[str, Any]]) -> None:
+    try:
+        with open(CHANNELS_FILE, "w", encoding="utf-8") as f:
+            json.dump(channels, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error("Failed to save channels index: %s", e)
+
+
+def get_channel(channel_id: str) -> Optional[Dict[str, Any]]:
+    cdir = get_channel_dir(channel_id)
+    cfile = cdir / "channel.json"
+    if cfile.exists():
+        try:
+            with open(cfile, "r", encoding="utf-8") as f:
+                ch = json.load(f)
+            projects = load_projects_index()
+            ch_projects = [p for p in projects if p.get("channel_id") == channel_id]
+            ch["video_count"] = len(ch_projects)
+            char_file = cdir / "character_ref.png"
+            if char_file.exists():
+                ch.setdefault("character_settings", {})
+                ch["character_settings"]["character_image_url"] = f"/output/story_studio/channels/{channel_id}/character_ref.png?t={int(char_file.stat().st_mtime)}"
+            return ch
+        except Exception as e:
+            logger.error("Failed to read channel %s: %s", channel_id, e)
+    return None
+
+
+def save_channel(channel_data: Dict[str, Any]) -> Dict[str, Any]:
+    channel_id = channel_data.get("id")
+    if not channel_id:
+        channel_id = f"channel_{uuid.uuid4().hex[:8]}"
+        channel_data["id"] = channel_id
+    channel_data["updated_at"] = time.time()
+    if "created_at" not in channel_data:
+        channel_data["created_at"] = time.time()
+
+    cdir = get_channel_dir(channel_id)
+    cfile = cdir / "channel.json"
+    with open(cfile, "w", encoding="utf-8") as f:
+        json.dump(channel_data, f, ensure_ascii=False, indent=2)
+
+    try:
+        all_projs = load_projects_index()
+        video_count = sum(1 for p in all_projs if p.get("channel_id") == channel_id)
+    except Exception:
+        video_count = channel_data.get("video_count", 0)
+
+    index = [c for c in load_channels_index() if c["id"] != channel_id]
+    summary = {
+        "id": channel_id,
+        "name": channel_data.get("name", "Untitled Channel"),
+        "handle": channel_data.get("handle", ""),
+        "title_prefix": channel_data.get("title_prefix", ""),
+        "description": channel_data.get("description", ""),
+        "niche": channel_data.get("niche", "brain_psychology"),
+        "character_image_url": channel_data.get("character_settings", {}).get("character_image_url", ""),
+        "hero_lock": channel_data.get("character_settings", {}).get("hero_lock", ""),
+        "video_count": video_count,
+        "created_at": channel_data["created_at"],
+        "updated_at": channel_data["updated_at"],
+    }
+    index.append(summary)
+    save_channels_index(index)
+    return channel_data
+
+
+def delete_channel(channel_id: str, delete_projects: bool = False) -> bool:
+    cdir = CHANNELS_DIR / channel_id
+    if cdir.exists():
+        shutil.rmtree(cdir, ignore_errors=True)
+    index = [c for c in load_channels_index() if c["id"] != channel_id]
+    save_channels_index(index)
+    if delete_projects:
+        projects = load_projects_index()
+        for p in projects:
+            if p.get("channel_id") == channel_id:
+                delete_project(p["id"])
+    return True
+
+
+def upload_channel_character(channel_id: str, file_bytes: bytes, filename: str = "character_ref.png") -> Dict[str, Any]:
+    cdir = get_channel_dir(channel_id)
+    char_file = cdir / "character_ref.png"
+    with open(char_file, "wb") as f:
+        f.write(file_bytes)
+    ch = get_channel(channel_id) or {"id": channel_id}
+    ch.setdefault("character_settings", {})
+    ts = int(time.time())
+    url = f"/output/story_studio/channels/{channel_id}/character_ref.png?t={ts}"
+    ch["character_settings"]["character_image_url"] = url
+    save_channel(ch)
+    return {"ok": True, "url": url}
+
+
+def ensure_default_channels_and_migration() -> List[Dict[str, Any]]:
+    """Initialize default Channel 1 (Psychology) and Channel 2 (Ancient Humans),
+    and auto-migrate existing projects by matching 'K1' and 'K2' titles.
+    """
+    default_channels = [
+        {
+            "id": "channel_k1",
+            "name": "Kênh 1 — Tâm Lý Học & Não Bộ (Brain Psychology)",
+            "handle": "@BrainPsychologyExplained",
+            "title_prefix": "K1-p - ",
+            "description": "Kênh hoạt hình 2D doodle giải mã thiên kiến nhận thức, tâm lý học hành vi và cạm bẫy não bộ hiện đại.",
+            "niche": "brain_psychology",
+            "character_settings": {
+                "character_image_url": "/output/story_studio/channels/channel_k1/character_ref.png",
+                "character_media_id": "",
+                "flow_project_id": "",
+                "hero_lock": "The main minimalist stick figure character from the reference image with a round white head",
+            },
+            "prompt_templates": {
+                "prompt_style": "brain_psychology",
+                "background_mode": "dynamic",
+                "scene_prefix": "Hand-drawn 2D doodle cartoon animation, flat solid colors, bold black hand-drawn outlines, slightly wobbly imperfect marker lines, minimalist style, ",
+                "scene_suffix_no_text": ", same character design as the reference image, preserving character facial features and minimalist stick figure body, do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, no photorealism, no 3D render, no CGI, no realistic shading, 16:9 widescreen, simple educational YouTube explainer doodle style.",
+                "scene_suffix_concept_card": ", centered single bold red hand-lettered keyword text on plain background only, no subtitles, no paragraphs, no extra words, no gradients, no photographic textures, 16:9 widescreen, simple educational YouTube explainer doodle style.",
+                "topic_requirements": STYLES_REGISTRY.get("brain_psychology", {}).get("default_topic_requirements", ""),
+                "ai_director_system_prompt": "",
+                "script_system_prompt": "",
+            },
+            "thumbnail_templates": {
+                "prefix": "YouTube high-CTR thumbnail, 16:9 aspect ratio, 2D minimalist doodle style, bold contrasting colors, ",
+                "suffix": ", same character design as the reference image, extremely expressive facial expression, uncluttered composition, eye-catching visual paradox, no small text, high resolution",
+            },
+            "tts_preset": {
+                "provider": "minimax",
+                "voice_id": "male-qn-qingse",
+                "model": "speech-02-turbo",
+                "speed": 1.05,
+            },
+            "browser_profile": {
+                "profile_dir": "output/story_studio/browser_profiles/channel_k1",
+                "proxy": None,
+                "last_opened_at": None,
+            },
+        },
+        {
+            "id": "channel_k2",
+            "name": "Kênh 2 — Con Người Cổ Đại & Sinh Tồn (Ancient Humans)",
+            "handle": "@AncientHumansExplained",
+            "title_prefix": "K2-p - ",
+            "description": "Kênh hoạt hình 2D doodle về nguồn gốc nhân loại, tiến hóa sinh tồn và nhân chủng học tiền sử.",
+            "niche": "ancient_humans",
+            "character_settings": {
+                "character_image_url": "/output/story_studio/channels/channel_k2/character_ref.png",
+                "character_media_id": "",
+                "flow_project_id": "",
+                "hero_lock": "The main stick figure character from the reference image with spiky bright orange hair",
+            },
+            "prompt_templates": {
+                "prompt_style": "ancient_humans",
+                "background_mode": "dynamic",
+                "scene_prefix": "Hand-drawn 2D doodle cartoon animation, flat solid colors, bold black hand-drawn outlines, slightly wobbly imperfect marker lines, minimalist style, ",
+                "scene_suffix_no_text": ", same character design as the reference image, preserving character facial features and hair style, do not redesign the character, do not change hair color or clothes, no text, no words, no letters, no subtitles, no speech bubbles, no captions, no blank background, no photorealism, no 3D render, no CGI, no realistic shading, 16:9 widescreen, simple educational YouTube explainer doodle style.",
+                "scene_suffix_concept_card": ", centered single bold red hand-lettered keyword text on plain background only, no subtitles, no paragraphs, no extra words, no gradients, no photographic textures, 16:9 widescreen, simple educational YouTube explainer doodle style.",
+                "topic_requirements": STYLES_REGISTRY.get("ancient_humans", {}).get("default_topic_requirements", ""),
+                "ai_director_system_prompt": "",
+                "script_system_prompt": "",
+            },
+            "thumbnail_templates": {
+                "prefix": "YouTube high-CTR thumbnail, 16:9 aspect ratio, 2D minimalist doodle style, bold contrasting colors, ",
+                "suffix": ", same character design as the reference image with spiky bright orange hair, extremely expressive facial expression, eye-catching visual paradox, high resolution",
+            },
+            "tts_preset": {
+                "provider": "minimax",
+                "voice_id": "male-qn-qingse",
+                "model": "speech-02-turbo",
+                "speed": 1.0,
+            },
+            "browser_profile": {
+                "profile_dir": "output/story_studio/browser_profiles/channel_k2",
+                "proxy": None,
+                "last_opened_at": None,
+            },
+        },
+    ]
+
+    index = []
+    for ch_data in default_channels:
+        cid = ch_data["id"]
+        cdir = get_channel_dir(cid)
+        cfile = cdir / "channel.json"
+        
+        if not (cdir / "character_ref.png").exists():
+            candidate_pids = []
+            if cid == "channel_k1":
+                candidate_pids = ["6f197433-e252-4a4b-89cf-ea90ced9addc", "970fb0bb-7caf-464b-a02e-a7c5429ed272", "dca6c023-5ffc-48d3-b3dd-c294de74bf2a"]
+            else:
+                candidate_pids = ["3b3b3318-c6b3-40c9-b490-a99ea8d52b96", "1f8a31f7-9b9b-4b53-8ea4-5b2a77cee3e3", "2db7990d-8d58-471b-9f32-349308d55da3"]
+            for pid in candidate_pids:
+                p_char = STORY_STUDIO_DIR / pid / "character_ref.png"
+                if p_char.exists():
+                    try:
+                        shutil.copy2(p_char, cdir / "character_ref.png")
+                        break
+                    except Exception:
+                        pass
+
+        char_file = cdir / "character_ref.png"
+        if char_file.exists():
+            ch_data["character_settings"]["character_image_url"] = f"/output/story_studio/channels/{cid}/character_ref.png?t={int(char_file.stat().st_mtime)}"
+        
+        ch_data["created_at"] = time.time()
+        ch_data["updated_at"] = time.time()
+        with open(cfile, "w", encoding="utf-8") as f:
+            json.dump(ch_data, f, ensure_ascii=False, indent=2)
+
+        index.append({
+            "id": cid,
+            "name": ch_data["name"],
+            "handle": ch_data["handle"],
+            "title_prefix": ch_data["title_prefix"],
+            "description": ch_data["description"],
+            "niche": ch_data["niche"],
+            "character_image_url": ch_data["character_settings"]["character_image_url"],
+            "hero_lock": ch_data["character_settings"]["hero_lock"],
+            "video_count": 0,
+            "created_at": ch_data["created_at"],
+            "updated_at": ch_data["updated_at"],
+        })
+    save_channels_index(index)
+
+    if PROJECTS_FILE.exists():
+        try:
+            with open(PROJECTS_FILE, "r", encoding="utf-8") as f:
+                projs = json.load(f)
+            updated_projs = []
+            for p in projs:
+                pid = p.get("id")
+                title = p.get("title", "")
+                assigned_cid = "channel_k2" if "K2" in title.upper() else "channel_k1"
+                p["channel_id"] = assigned_cid
+                updated_projs.append(p)
+
+                pfile = STORY_STUDIO_DIR / pid / "project.json"
+                if pfile.exists():
+                    try:
+                        with open(pfile, "r", encoding="utf-8") as pf:
+                            p_data = json.load(pf)
+                        p_data["channel_id"] = assigned_cid
+                        with open(pfile, "w", encoding="utf-8") as pf:
+                            json.dump(p_data, pf, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+            save_projects_index(updated_projs)
+            
+            for idx_ch in index:
+                c_cnt = sum(1 for p in updated_projs if p.get("channel_id") == idx_ch["id"])
+                idx_ch["video_count"] = c_cnt
+                ch_obj = get_channel(idx_ch["id"])
+                if ch_obj:
+                    ch_obj["video_count"] = c_cnt
+                    save_channel(ch_obj)
+            save_channels_index(index)
+        except Exception as e:
+            logger.error("Failed to migrate projects to channels: %s", e)
+
+    return index
+
+
 def get_project_dir(project_id: str) -> Path:
     pdir = STORY_STUDIO_DIR / project_id
     pdir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +472,10 @@ def load_projects_index() -> List[Dict[str, Any]]:
         for p in raw_projects:
             pid = p.get("id")
             if pid and (STORY_STUDIO_DIR / pid / "project.json").exists():
+                if not p.get("channel_id"):
+                    t = (p.get("title") or "").upper()
+                    p["channel_id"] = "channel_k2" if "K2" in t else "channel_k1"
+                    needs_prune = True
                 valid_projects.append(p)
             else:
                 needs_prune = True
@@ -206,6 +504,12 @@ def get_project(project_id: str) -> Optional[Dict[str, Any]]:
                 proj = json.load(f)
 
             needs_save = False
+            # Auto-assign channel_id if missing
+            if not proj.get("channel_id"):
+                t = (proj.get("title") or "").upper()
+                proj["channel_id"] = "channel_k2" if "K2" in t else "channel_k1"
+                needs_save = True
+
             # Auto-recover narration.mp3 if it exists on disk but audio_url is missing
             audio_file = pdir / "narration.mp3"
             if audio_file.exists() and not proj.get("audio_url"):
@@ -235,7 +539,6 @@ def get_project(project_id: str) -> Optional[Dict[str, Any]]:
                         sc["error"] = None
                         needs_save = True
                 elif sc.get("status") == "generating":
-                    # File does not exist on disk, reset interrupted 'generating' to 'pending'
                     sc["status"] = "pending"
                     sc["error"] = None
                     needs_save = True
@@ -256,6 +559,10 @@ def save_project(project_data: Dict[str, Any]) -> Dict[str, Any]:
     if "created_at" not in project_data:
         project_data["created_at"] = time.time()
 
+    if "channel_id" not in project_data:
+        title = project_data.get("title", "")
+        project_data["channel_id"] = "channel_k2" if "K2" in title.upper() else "channel_k1"
+
     pdir = get_project_dir(project_id)
     pfile = pdir / "project.json"
     with open(pfile, "w", encoding="utf-8") as f:
@@ -266,6 +573,7 @@ def save_project(project_data: Dict[str, Any]) -> Dict[str, Any]:
     existing_idx = next((i for i, p in enumerate(index) if p["id"] == project_id), None)
     summary = {
         "id": project_id,
+        "channel_id": project_data.get("channel_id", "channel_k1"),
         "title": project_data.get("title", "Untitled Story"),
         "keyword": project_data.get("keyword", ""),
         "created_at": project_data["created_at"],
@@ -907,6 +1215,9 @@ def build_scene_prompts(
     style: str = "forgotten_civilizations",
     background_mode: str = "dynamic",
     topic_requirements: str = "",
+    custom_prefix: Optional[str] = None,
+    custom_suffix_no_text: Optional[str] = None,
+    custom_suffix_concept: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Build high-consistency 2D doodle prompts with strict text control (100% English prompts)."""
     style_key = style.lower().strip() if style else "forgotten_civilizations"
@@ -917,7 +1228,7 @@ def build_scene_prompts(
     elif style_key not in STYLES_REGISTRY:
         style_key = "forgotten_civilizations"
 
-    prefix = (
+    prefix = custom_prefix if (custom_prefix and custom_prefix.strip()) else (
         "Hand-drawn 2D doodle cartoon animation, flat solid colors, "
         "bold black hand-drawn outlines, slightly wobbly imperfect marker lines, "
     )
@@ -925,13 +1236,13 @@ def build_scene_prompts(
     hero_clean = (hero_lock or "").strip()
 
     if style_key == "brain_psychology":
-        suffix_no_text = (
+        suffix_no_text = custom_suffix_no_text if (custom_suffix_no_text and custom_suffix_no_text.strip()) else (
             ", same character design as the reference image, preserving facial features and minimalist stick figure body, "
             "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
             "no gradients, no drop shadows, no photographic textures, no photorealism, "
             "no 3D render, no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
         )
-        suffix_emphasis_text = (
+        suffix_emphasis_text = custom_suffix_concept if (custom_suffix_concept and custom_suffix_concept.strip()) else (
             ", same character design as the reference image, preserving facial features and minimalist stick figure body, "
             "do not redesign the character, single bold keyword on object only, no subtitles, no paragraph text, "
             "no gradients, no drop shadows, no photographic textures, no photorealism, "
@@ -1090,13 +1401,13 @@ def build_scene_prompts(
 
     elif style_key == "ancient_humans":
         # Suffix with NO text allowed for normal scenes
-        suffix_no_text = (
+        suffix_no_text = custom_suffix_no_text if (custom_suffix_no_text and custom_suffix_no_text.strip()) else (
             ", same character design as the reference image, preserving facial features, spiky orange hair and stick figure body, "
             "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
             "no gradients, no drop shadows, no photographic textures, no photorealism, "
             "no 3D render, no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
         )
-        suffix_emphasis_text = (
+        suffix_emphasis_text = custom_suffix_concept if (custom_suffix_concept and custom_suffix_concept.strip()) else (
             ", same character design as the reference image, preserving facial features, spiky orange hair and stick figure body, "
             "do not redesign the character, single bold keyword on object only, no subtitles, no paragraph text, "
             "no gradients, no drop shadows, no photographic textures, no photorealism, "
@@ -1161,7 +1472,7 @@ def build_scene_prompts(
     else:
         # Default: forgotten_civilizations per flow_nen_van_minh_bi_bo_quen.txt
         # Normal scenes STRICTLY prohibit text to prevent AI from painting subtitles on drawings
-        suffix_no_text = (
+        suffix_no_text = custom_suffix_no_text if (custom_suffix_no_text and custom_suffix_no_text.strip()) else (
             ", same character design as the reference image, exactly preserving the character's facial features, hair style, hair color, and clothing from the reference image, "
             "do not redesign the character, do not change hair color or clothes, "
             "no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
@@ -1170,8 +1481,7 @@ def build_scene_prompts(
             "no 3D render, no realistic faces, no realistic skin, no anime, 16:9 widescreen, "
             "simple educational YouTube explainer doodle style."
         )
-        # Dedicated concept card suffix for explicit emphasis / definition
-        suffix_concept_text = (
+        suffix_concept_text = custom_suffix_concept if (custom_suffix_concept and custom_suffix_concept.strip()) else (
             ", centered single bold red hand-lettered keyword text only, no subtitles, no paragraphs, no extra words, "
             "no gradients, no drop shadows, no photographic textures, no photorealism, "
             "no 3D render, no realistic faces, no anime, 16:9 widescreen, "
@@ -1439,6 +1749,9 @@ async def generate_scene_prompts_ai(
     full_script: str = "",
     target_scene_id: Optional[int] = None,
     chaining_mode: bool = False,
+    custom_prefix: Optional[str] = None,
+    custom_suffix: Optional[str] = None,
+    custom_system_prompt: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Universal AI-driven 2D doodle storyboard generator (OpenAI-compatible / Gemini 3.8 Flash).
     
@@ -1449,7 +1762,7 @@ async def generate_scene_prompts_ai(
     if not scenes:
         return []
 
-    prefix = (
+    prefix = custom_prefix if (custom_prefix and custom_prefix.strip()) else (
         "Hand-drawn 2D doodle cartoon animation, flat solid colors, "
         "bold black hand-drawn outlines, slightly wobbly imperfect marker lines, "
     )
@@ -1459,19 +1772,15 @@ async def generate_scene_prompts_ai(
 
     is_fixed_bg = (background_mode or "").strip().lower() == "fixed"
 
-    if is_fixed_bg:
+    if custom_suffix and custom_suffix.strip():
+        suffix = custom_suffix
+    elif is_fixed_bg:
         suffix = (
             ", plain cream background with a gray ground strip, "
             "same character design as the reference image, preserving facial features and minimalist stick figure body, "
             "do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, "
             "no gradients, no drop shadows, no photographic textures, no photorealism, no 3D render, "
             "no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
-        )
-        bg_instruction = (
-            "1. BACKGROUND & ENVIRONMENT (FIXED MINIMALIST STUDIO):\n"
-            "   All scenes MUST take place against a minimalist plain cream background with a gray ground strip.\n"
-            "   Do NOT describe varied outdoor environments, rooms, walls, or scenic landscapes.\n"
-            "   Focus purely on character expressions, poses, props, and symbolic interactions in front of this clean minimalist studio backdrop."
         )
     else:
         suffix = (
@@ -1480,6 +1789,15 @@ async def generate_scene_prompts_ai(
             "no gradients, no drop shadows, no photographic textures, no photorealism, no 3D render, "
             "no realistic faces, no anime, 16:9 widescreen, simple educational YouTube explainer doodle style."
         )
+
+    if is_fixed_bg:
+        bg_instruction = (
+            "1. BACKGROUND & ENVIRONMENT (FIXED MINIMALIST STUDIO):\n"
+            "   All scenes MUST take place against a minimalist plain cream background with a gray ground strip.\n"
+            "   Do NOT describe varied outdoor environments, rooms, walls, or scenic landscapes.\n"
+            "   Focus purely on character expressions, poses, props, and symbolic interactions in front of this clean minimalist studio backdrop."
+        )
+    else:
         bg_instruction = (
             "1. BACKGROUND & ENVIRONMENT (DYNAMIC CONTEXTUAL SETTING):\n"
             "   Deeply understand the story context and genre from the full script and narration sentences.\n"
@@ -1562,7 +1880,10 @@ Return strictly a valid JSON array of objects with keys "id", "transition_type",
    ]
 """
 
-    system_prompt = f"""You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations (Kurzgesagt / MinutePhysics / AsapSCIENCE style).
+    if custom_system_prompt and custom_system_prompt.strip():
+        system_prompt = custom_system_prompt
+    else:
+        system_prompt = f"""You are an elite Visual Director and Lead Storyboard Illustrator for viral educational 2D doodle animations (Kurzgesagt / MinutePhysics / AsapSCIENCE style).
 
 PRIMARY GOAL:
 You will be given the FULL NARRATIVE SCRIPT of the video and its chronological scene segments.

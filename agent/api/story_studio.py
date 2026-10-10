@@ -9,11 +9,44 @@ from pydantic import BaseModel, Field
 
 from agent.services import story_studio as ss
 from agent.services import story_shorts as sshorts
+from agent.services import channel_browser as cb
 
 router = APIRouter(prefix="/story-studio", tags=["story-studio"])
 
 
+class CreateChannelRequest(BaseModel):
+    name: str = "New YouTube Channel"
+    handle: Optional[str] = ""
+    title_prefix: Optional[str] = ""
+    description: Optional[str] = ""
+    niche: Optional[str] = "brain_psychology"
+    character_settings: Optional[Dict[str, Any]] = None
+    prompt_templates: Optional[Dict[str, Any]] = None
+    thumbnail_templates: Optional[Dict[str, Any]] = None
+    tts_preset: Optional[Dict[str, Any]] = None
+    browser_profile: Optional[Dict[str, Any]] = None
+
+
+class UpdateChannelRequest(BaseModel):
+    name: Optional[str] = None
+    handle: Optional[str] = None
+    title_prefix: Optional[str] = None
+    description: Optional[str] = None
+    niche: Optional[str] = None
+    character_settings: Optional[Dict[str, Any]] = None
+    prompt_templates: Optional[Dict[str, Any]] = None
+    thumbnail_templates: Optional[Dict[str, Any]] = None
+    tts_preset: Optional[Dict[str, Any]] = None
+    browser_profile: Optional[Dict[str, Any]] = None
+
+
+class OpenChannelBrowserRequest(BaseModel):
+    target_url: Optional[str] = "https://studio.youtube.com"
+    proxy: Optional[str] = None
+
+
 class CreateStoryProjectRequest(BaseModel):
+    channel_id: Optional[str] = None
     title: str = "New Forgotten Civilization Story"
     keyword: str = ""
     hero_lock: Optional[str] = None
@@ -21,9 +54,11 @@ class CreateStoryProjectRequest(BaseModel):
     background_mode: Optional[str] = "dynamic"
     topic_requirements: Optional[str] = ""
     chaining_mode: Optional[bool] = False
+    prompt_config: Optional[Dict[str, Any]] = None
 
 
 class UpdateStoryProjectRequest(BaseModel):
+    channel_id: Optional[str] = None
     title: Optional[str] = None
     keyword: Optional[str] = None
     hero_lock: Optional[str] = None
@@ -32,6 +67,7 @@ class UpdateStoryProjectRequest(BaseModel):
     topic_requirements: Optional[str] = None
     current_stage: Optional[int] = None
     chaining_mode: Optional[bool] = None
+    prompt_config: Optional[Dict[str, Any]] = None
 
 
 class GenerateScriptRequest(BaseModel):
@@ -86,6 +122,10 @@ class BuildPromptsRequest(BaseModel):
     background_mode: Optional[str] = "dynamic"
     topic_requirements: Optional[str] = None
     chaining_mode: Optional[bool] = False
+    custom_prefix: Optional[str] = None
+    custom_suffix_no_text: Optional[str] = None
+    custom_suffix_concept: Optional[str] = None
+    custom_system_prompt: Optional[str] = None
 
 
 class GeneratePromptsAIRequest(BaseModel):
@@ -100,6 +140,9 @@ class GeneratePromptsAIRequest(BaseModel):
     topic_requirements: Optional[str] = None
     script_text: Optional[str] = None
     chaining_mode: Optional[bool] = False
+    custom_prefix: Optional[str] = None
+    custom_suffix: Optional[str] = None
+    custom_system_prompt: Optional[str] = None
 
 
 class GenerateSceneImageRequest(BaseModel):
@@ -160,6 +203,152 @@ class BatchRenderShortsRequest(BaseModel):
     sfx_mode: Optional[str] = "none"
 
 
+# ── Channel CRUD & Browser Profile ───────────────────────────────────
+
+
+@router.get("/channels")
+async def list_channels():
+    """List all Story Studio YouTube channels."""
+    return {"channels": ss.load_channels_index()}
+
+
+@router.post("/channels")
+async def create_channel(req: CreateChannelRequest):
+    """Create a new YouTube Channel with branding, defaults and prompt templates."""
+    cid = f"channel_{uuid.uuid4().hex[:8]}"
+    ch_data = {
+        "id": cid,
+        "name": req.name,
+        "handle": req.handle or "",
+        "title_prefix": req.title_prefix or "",
+        "description": req.description or "",
+        "niche": req.niche or "brain_psychology",
+        "character_settings": req.character_settings or {
+            "character_image_url": "",
+            "character_media_id": "",
+            "flow_project_id": "",
+            "hero_lock": ss.DEFAULT_HERO_LOCK,
+        },
+        "prompt_templates": req.prompt_templates or {
+            "prompt_style": req.niche or "brain_psychology",
+            "background_mode": "dynamic",
+            "scene_prefix": "Hand-drawn 2D doodle cartoon animation, flat solid colors, bold black hand-drawn outlines, slightly wobbly imperfect marker lines, minimalist style, ",
+            "scene_suffix_no_text": ", same character design as the reference image, preserving character facial features and minimalist stick figure body, do not redesign the character, no text, no words, no letters, no subtitles, no speech bubbles, no captions, no photorealism, no 3D render, no CGI, no realistic shading, 16:9 widescreen, simple educational YouTube explainer doodle style.",
+            "scene_suffix_concept_card": ", centered single bold red hand-lettered keyword text on plain background only, no subtitles, no paragraphs, no extra words, no gradients, no photographic textures, 16:9 widescreen, simple educational YouTube explainer doodle style.",
+            "topic_requirements": ss.STYLES_REGISTRY.get(req.niche or "brain_psychology", {}).get("default_topic_requirements", ""),
+            "ai_director_system_prompt": "",
+            "script_system_prompt": "",
+        },
+        "thumbnail_templates": req.thumbnail_templates or {
+            "prefix": "YouTube high-CTR thumbnail, 16:9 aspect ratio, 2D minimalist doodle style, bold contrasting colors, ",
+            "suffix": ", same character design as the reference image, extremely expressive facial expression, eye-catching visual paradox, high resolution",
+        },
+        "tts_preset": req.tts_preset or {
+            "provider": "minimax",
+            "voice_id": "male-qn-qingse",
+            "model": "speech-02-turbo",
+            "speed": 1.0,
+        },
+        "browser_profile": req.browser_profile or {
+            "profile_dir": f"output/story_studio/browser_profiles/{cid}",
+            "proxy": None,
+            "last_opened_at": None,
+        },
+    }
+    return ss.save_channel(ch_data)
+
+
+@router.get("/channels/{channel_id}")
+async def get_channel(channel_id: str):
+    """Get complete channel configuration and statistics."""
+    ch = ss.get_channel(channel_id)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    return ch
+
+
+@router.patch("/channels/{channel_id}")
+@router.put("/channels/{channel_id}")
+async def update_channel(channel_id: str, req: UpdateChannelRequest):
+    """Update channel metadata, DNA, character settings or prompt templates."""
+    ch = ss.get_channel(channel_id)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    if req.name is not None and req.name.strip():
+        ch["name"] = req.name.strip()
+    if req.handle is not None:
+        ch["handle"] = req.handle.strip()
+    if req.title_prefix is not None:
+        ch["title_prefix"] = req.title_prefix
+    if req.description is not None:
+        ch["description"] = req.description.strip()
+    if req.niche is not None:
+        ch["niche"] = req.niche.strip()
+    if req.character_settings is not None:
+        ch.setdefault("character_settings", {})
+        ch["character_settings"].update(req.character_settings)
+    if req.prompt_templates is not None:
+        ch.setdefault("prompt_templates", {})
+        ch["prompt_templates"].update(req.prompt_templates)
+    if req.thumbnail_templates is not None:
+        ch.setdefault("thumbnail_templates", {})
+        ch["thumbnail_templates"].update(req.thumbnail_templates)
+    if req.tts_preset is not None:
+        ch.setdefault("tts_preset", {})
+        ch["tts_preset"].update(req.tts_preset)
+    if req.browser_profile is not None:
+        ch.setdefault("browser_profile", {})
+        ch["browser_profile"].update(req.browser_profile)
+    return ss.save_channel(ch)
+
+
+@router.delete("/channels/{channel_id}")
+async def delete_channel(channel_id: str, delete_projects: bool = False):
+    """Delete channel with optional cascade project deletion."""
+    ch = ss.get_channel(channel_id)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    ss.delete_channel(channel_id, delete_projects=delete_projects)
+    return {"ok": True, "deleted": channel_id}
+
+
+@router.post("/channels/{channel_id}/character")
+async def upload_channel_character(channel_id: str, file: UploadFile = File(...)):
+    """Upload master character reference image for a channel."""
+    ch = ss.get_channel(channel_id)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    content = await file.read()
+    res = ss.upload_channel_character(channel_id, content, filename=file.filename or "character_ref.png")
+    return res
+
+
+@router.post("/channels/{channel_id}/open-browser")
+async def open_channel_browser(channel_id: str, req: Optional[OpenChannelBrowserRequest] = None):
+    """Launch isolated DrissionPage Chrome window for this channel."""
+    ch = ss.get_channel(channel_id)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    target_url = req.target_url if req and req.target_url else "https://studio.youtube.com"
+    proxy = (req.proxy if req and req.proxy else None) or ch.get("browser_profile", {}).get("proxy")
+    try:
+        res = cb.launch_channel_browser(channel_id, target_url=target_url, proxy=proxy)
+        ch.setdefault("browser_profile", {})
+        ch["browser_profile"]["last_opened_at"] = time.time()
+        ss.save_channel(ch)
+        return res
+    except Exception as e:
+        raise HTTPException(500, f"Failed to launch browser: {e}")
+
+
+@router.get("/channels/{channel_id}/browser-status")
+async def get_channel_browser_status(channel_id: str):
+    """Check if the channel's Chrome profile is currently open."""
+    is_open = cb.is_channel_browser_open(channel_id)
+    port = cb.get_channel_debug_port(channel_id)
+    return {"channel_id": channel_id, "is_open": is_open, "port": port}
+
+
 # ── Project CRUD ─────────────────────────────────────────────────────
 
 
@@ -170,25 +359,77 @@ async def get_styles():
 
 
 @router.get("/projects")
-async def list_projects():
-    """List all Story Studio projects."""
-    return {"projects": ss.load_projects_index()}
+async def list_projects(channel_id: Optional[str] = None):
+    """List all Story Studio projects, optionally filtered by channel_id."""
+    all_projects = ss.load_projects_index()
+    if channel_id:
+        filtered = [p for p in all_projects if p.get("channel_id") == channel_id]
+        return {"projects": filtered}
+    return {"projects": all_projects}
 
 
 @router.post("/projects")
 async def create_project(req: CreateStoryProjectRequest):
-    """Create a new Story Studio project."""
+    """Create a new Story Studio project, auto-inheriting from Channel."""
     pid = str(uuid.uuid4())
+    channel = ss.get_channel(req.channel_id) if req.channel_id else None
+    if not channel:
+        channels = ss.load_channels_index()
+        if channels:
+            channel = ss.get_channel(channels[0]["id"])
+
+    assigned_channel_id = channel["id"] if channel else "channel_k1"
+
+    final_title = req.title
+    if req.channel_id and channel and channel.get("title_prefix") and not final_title.startswith(channel["title_prefix"]):
+        final_title = f"{channel['title_prefix']}{final_title}"
+    elif (final_title == "New Forgotten Civilization Story" or final_title.startswith("Câu Chuyện Mới")) and channel and channel.get("title_prefix"):
+        final_title = f"{channel['title_prefix']}{final_title}"
+
+    c_chars = channel.get("character_settings", {}) if channel else {}
+    c_prompts = channel.get("prompt_templates", {}) if channel else {}
+    c_tts = channel.get("tts_preset", {}) if channel else {}
+
+    hero_lock = req.hero_lock or c_chars.get("hero_lock") or ss.DEFAULT_HERO_LOCK
+    prompt_style = req.prompt_style or c_prompts.get("prompt_style") or "forgotten_civilizations"
+    background_mode = req.background_mode or c_prompts.get("background_mode") or "dynamic"
+    topic_requirements = req.topic_requirements if req.topic_requirements is not None else c_prompts.get("topic_requirements", "")
+
+    pdir = ss.get_project_dir(pid)
+
+    character_url = ""
+    if channel:
+        c_char_path = ss.get_channel_dir(channel["id"]) / "character_ref.png"
+        if c_char_path.exists():
+            try:
+                shutil.copy2(c_char_path, pdir / "character_ref.png")
+                ts = int(time.time())
+                character_url = f"/output/story_studio/{pid}/character_ref.png?t={ts}"
+            except Exception:
+                pass
+
     proj = {
         "id": pid,
-        "title": req.title,
+        "channel_id": assigned_channel_id,
+        "title": final_title,
         "keyword": req.keyword,
         "current_stage": 1,
-        "hero_lock": req.hero_lock or ss.DEFAULT_HERO_LOCK,
-        "prompt_style": req.prompt_style or "forgotten_civilizations",
-        "background_mode": req.background_mode or "dynamic",
-        "topic_requirements": req.topic_requirements or "",
+        "hero_lock": hero_lock,
+        "prompt_style": prompt_style,
+        "background_mode": background_mode,
+        "topic_requirements": topic_requirements,
         "chaining_mode": bool(req.chaining_mode) if req.chaining_mode is not None else False,
+        "character_image_url": character_url or c_chars.get("character_image_url", ""),
+        "character_media_id": c_chars.get("character_media_id", ""),
+        "flow_project_id": c_chars.get("flow_project_id", ""),
+        "tts_config": c_tts if c_tts else None,
+        "prompt_config": req.prompt_config or {
+            "scene_prefix": c_prompts.get("scene_prefix", ""),
+            "scene_suffix_no_text": c_prompts.get("scene_suffix_no_text", ""),
+            "scene_suffix_concept_card": c_prompts.get("scene_suffix_concept_card", ""),
+            "ai_director_system_prompt": c_prompts.get("ai_director_system_prompt", ""),
+            "script_system_prompt": c_prompts.get("script_system_prompt", ""),
+        },
         "scenes": [],
     }
     return ss.save_project(proj)
@@ -499,6 +740,12 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
     full_script = (proj.get("script_text") or "").strip()
     chaining_mode = bool(req.chaining_mode) if req.chaining_mode is not None else bool(proj.get("chaining_mode", False))
 
+    p_config = proj.get("prompt_config") or {}
+    custom_prefix = req.custom_prefix if req.custom_prefix is not None else p_config.get("scene_prefix")
+    custom_suffix_no_text = req.custom_suffix_no_text if req.custom_suffix_no_text is not None else p_config.get("scene_suffix_no_text")
+    custom_suffix_concept = req.custom_suffix_concept if req.custom_suffix_concept is not None else p_config.get("scene_suffix_concept_card")
+    custom_system_prompt = req.custom_system_prompt if req.custom_system_prompt is not None else p_config.get("ai_director_system_prompt")
+
     if req.use_ai:
         scenes = await ss.generate_scene_prompts_ai(
             proj.get("scenes", []),
@@ -512,6 +759,9 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
             topic_requirements=topic_requirements,
             full_script=full_script,
             chaining_mode=chaining_mode,
+            custom_prefix=custom_prefix,
+            custom_suffix=custom_suffix_no_text,
+            custom_system_prompt=custom_system_prompt,
         )
     else:
         scenes = ss.build_scene_prompts(
@@ -521,7 +771,21 @@ async def build_prompts_endpoint(project_id: str, req: BuildPromptsRequest):
             style=prompt_style,
             background_mode=background_mode,
             topic_requirements=topic_requirements,
+            custom_prefix=custom_prefix,
+            custom_suffix_no_text=custom_suffix_no_text,
+            custom_suffix_concept=custom_suffix_concept,
         )
+
+    if "prompt_config" not in proj:
+        proj["prompt_config"] = {}
+    if req.custom_prefix is not None:
+        proj["prompt_config"]["scene_prefix"] = req.custom_prefix
+    if req.custom_suffix_no_text is not None:
+        proj["prompt_config"]["scene_suffix_no_text"] = req.custom_suffix_no_text
+    if req.custom_suffix_concept is not None:
+        proj["prompt_config"]["scene_suffix_concept_card"] = req.custom_suffix_concept
+    if req.custom_system_prompt is not None:
+        proj["prompt_config"]["ai_director_system_prompt"] = req.custom_system_prompt
 
     proj["scenes"] = scenes
     proj["hero_lock"] = hero_lock
@@ -555,6 +819,11 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
     full_script = (req.script_text or "").strip() or (proj.get("script_text") or "").strip()
     chaining_mode = bool(req.chaining_mode) if req.chaining_mode is not None else bool(proj.get("chaining_mode", False))
 
+    p_config = proj.get("prompt_config") or {}
+    custom_prefix = req.custom_prefix if req.custom_prefix is not None else p_config.get("scene_prefix")
+    custom_suffix = req.custom_suffix if req.custom_suffix is not None else p_config.get("scene_suffix_no_text")
+    custom_system_prompt = req.custom_system_prompt if req.custom_system_prompt is not None else p_config.get("ai_director_system_prompt")
+
     all_scenes = proj.get("scenes", [])
     if req.scene_id is not None:
         target_scenes = [s for s in all_scenes if s.get("id") == req.scene_id]
@@ -574,6 +843,9 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
             full_script=full_script,
             target_scene_id=req.scene_id,
             chaining_mode=chaining_mode,
+            custom_prefix=custom_prefix,
+            custom_suffix=custom_suffix,
+            custom_system_prompt=custom_system_prompt,
         )
         if updated:
             new_target = next((s for s in updated if s.get("id") == req.scene_id), None)
@@ -601,7 +873,19 @@ async def generate_prompts_ai_endpoint(project_id: str, req: GeneratePromptsAIRe
             topic_requirements=topic_requirements,
             full_script=full_script,
             chaining_mode=chaining_mode,
+            custom_prefix=custom_prefix,
+            custom_suffix=custom_suffix,
+            custom_system_prompt=custom_system_prompt,
         )
+
+    if "prompt_config" not in proj:
+        proj["prompt_config"] = {}
+    if req.custom_prefix is not None:
+        proj["prompt_config"]["scene_prefix"] = req.custom_prefix
+    if req.custom_suffix is not None:
+        proj["prompt_config"]["scene_suffix_no_text"] = req.custom_suffix
+    if req.custom_system_prompt is not None:
+        proj["prompt_config"]["ai_director_system_prompt"] = req.custom_system_prompt
 
     proj["scenes"] = scenes
     proj["hero_lock"] = hero_lock
