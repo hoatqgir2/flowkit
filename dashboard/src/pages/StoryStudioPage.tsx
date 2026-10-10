@@ -55,6 +55,7 @@ export interface ChannelItem {
   title_prefix?: string
   description?: string
   niche?: string
+  character_name?: string
   character_image_url?: string
   hero_lock?: string
   video_count?: number
@@ -85,6 +86,61 @@ export interface ChannelItem {
     last_opened_at?: number
   }
 }
+
+const DEFAULT_CHANNELS: ChannelItem[] = [
+  {
+    id: 'channel_k1',
+    name: 'KÊNH 1 — Tâm Lý Học & Não Bộ',
+    handle: '@TamLyHocNaoBo',
+    niche: 'brain_psychology',
+    title_prefix: 'K1',
+    character_name: 'Doodle Master K1',
+    character_image_url: '/output/story_studio/channel_k1/master_character.png',
+    character_settings: {
+      character_name: 'Doodle Master K1',
+      character_image_url: '/output/story_studio/channel_k1/master_character.png'
+    },
+    video_count: 3,
+    prompt_templates: {
+      scene_prefix: 'minimalist doodle art style, hand-drawn black ink lines on clean white textured paper background',
+      scene_suffix_no_text: 'stick-figure aesthetic, high contrast, clean negative space, masterpiece, no colors, no text, no captions, no words, no letters',
+      scene_suffix_concept_card: 'clean 2D doodle sketch, bold ink lines, isolated object on plain white background, educational diagram style, no text, no watermark',
+      ai_director_system_prompt: 'You are an expert visual director for 2D doodle YouTube explainer videos about psychology and neuroscience.'
+    },
+    tts_preset: {
+      provider: 'minimax',
+      voice_id: 'male-qn-qingse',
+      speed: 1.0,
+      model: 'speech-01-turbo'
+    }
+  },
+  {
+    id: 'channel_k2',
+    name: 'KÊNH 2 — Con Người Cổ Đại & Sinh Tồn',
+    handle: '@ConNguoiCoDai',
+    niche: 'ancient_humans',
+    title_prefix: 'K2',
+    character_name: 'Doodle Master K2',
+    character_image_url: '/output/story_studio/channel_k2/master_character.png',
+    character_settings: {
+      character_name: 'Doodle Master K2',
+      character_image_url: '/output/story_studio/channel_k2/master_character.png'
+    },
+    video_count: 3,
+    prompt_templates: {
+      scene_prefix: 'minimalist doodle art style, hand-drawn black ink lines on clean white paper',
+      scene_suffix_no_text: 'stick-figure aesthetic, prehistoric and survival elements, clean negative space, no colors, no text, no captions',
+      scene_suffix_concept_card: 'clean 2D doodle sketch, ancient tool and survival artifact diagram, white background, no text',
+      ai_director_system_prompt: 'You are an expert visual director for 2D doodle YouTube explainer videos about ancient humans, prehistory, and survival.'
+    },
+    tts_preset: {
+      provider: 'minimax',
+      voice_id: 'male-qn-jingying',
+      speed: 1.0,
+      model: 'speech-01-turbo'
+    }
+  }
+]
 
 interface SceneItem {
   id: number
@@ -354,15 +410,24 @@ export default function StoryStudioPage() {
   const [showAiPromptConfig, setShowAiPromptConfig] = useState<boolean>(false)
 
   // Channel Management State
-  const [channels, setChannels] = useState<ChannelItem[]>([])
+  const [channels, setChannels] = useState<ChannelItem[]>(DEFAULT_CHANNELS)
   const [selectedChannelId, setSelectedChannelId] = useState<string>(() => {
     const saved = localStorage.getItem('fk_selected_channel_id')
     return (saved && saved !== 'all') ? saved : 'channel_k1'
   })
-  const [activeChannelDetail, setActiveChannelDetail] = useState<ChannelItem | null>(null)
+  const [activeChannelDetail, setActiveChannelDetail] = useState<ChannelItem | null>(() => {
+    const saved = localStorage.getItem('fk_selected_channel_id')
+    const initId = (saved && saved !== 'all') ? saved : 'channel_k1'
+    return DEFAULT_CHANNELS.find(c => c.id === initId) || DEFAULT_CHANNELS[0]
+  })
   const [showChannelSettingsModal, setShowChannelSettingsModal] = useState<boolean>(false)
   const [channelSettingsTab, setChannelSettingsTab] = useState<'info' | 'character' | 'prompts' | 'tts' | 'browser'>('info')
-  const [channelEditForm, setChannelEditForm] = useState<any>({})
+  const [channelEditForm, setChannelEditForm] = useState<any>(() => {
+    const saved = localStorage.getItem('fk_selected_channel_id')
+    const initId = (saved && saved !== 'all') ? saved : 'channel_k1'
+    const initCh = DEFAULT_CHANNELS.find(c => c.id === initId) || DEFAULT_CHANNELS[0]
+    return JSON.parse(JSON.stringify(initCh))
+  })
   const [isSavingChannel, setIsSavingChannel] = useState<boolean>(false)
   const [isOpeningBrowser, setIsOpeningBrowser] = useState<boolean>(false)
   const [browserIsOpen, setBrowserIsOpen] = useState<boolean>(false)
@@ -446,7 +511,7 @@ export default function StoryStudioPage() {
   const loadChannels = async () => {
     try {
       const res = await fetchAPI<{ channels: ChannelItem[] }>('/api/story-studio/channels')
-      const chList = res.channels || []
+      const chList = (res.channels && res.channels.length > 0) ? res.channels : DEFAULT_CHANNELS
       setChannels(chList)
       
       const effectiveCid = (selectedChannelId && selectedChannelId !== 'all' && chList.some(c => c.id === selectedChannelId))
@@ -458,18 +523,27 @@ export default function StoryStudioPage() {
       await loadChannelDetail(effectiveCid)
       await loadProjects(effectiveCid)
     } catch (e) {
-      console.error('Failed to load channels', e)
+      console.warn('Failed to load channels from server, using local defaults', e)
+      setChannels(DEFAULT_CHANNELS)
+      const effectiveCid = (selectedChannelId && selectedChannelId !== 'all') ? selectedChannelId : 'channel_k1'
+      setSelectedChannelId(effectiveCid)
+      const current = DEFAULT_CHANNELS.find(c => c.id === effectiveCid) || DEFAULT_CHANNELS[0]
+      setActiveChannelDetail(current)
+      setChannelEditForm(JSON.parse(JSON.stringify(current)))
+      await loadProjects(effectiveCid)
     }
   }
 
   const loadChannelDetail = async (cid: string) => {
     try {
       const ch = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${cid}`)
-      setActiveChannelDetail(ch)
-      setChannelEditForm(JSON.parse(JSON.stringify(ch)))
-      checkBrowserStatus(cid)
+      if (ch && ch.id) {
+        setActiveChannelDetail(ch)
+        setChannelEditForm(JSON.parse(JSON.stringify(ch)))
+        checkBrowserStatus(cid)
+      }
     } catch (e) {
-      console.error('Failed to load channel detail', e)
+      console.warn('Failed to load channel detail', e)
     }
   }
 
@@ -499,25 +573,32 @@ export default function StoryStudioPage() {
     const targetCid = (!cid || cid === 'all') ? 'channel_k1' : cid
     setSelectedChannelId(targetCid)
     localStorage.setItem('fk_selected_channel_id', targetCid)
+    const local = channels.find(c => c.id === targetCid) || DEFAULT_CHANNELS.find(c => c.id === targetCid)
+    if (local) {
+      setActiveChannelDetail(local)
+      setChannelEditForm(JSON.parse(JSON.stringify(local)))
+    }
     await loadChannelDetail(targetCid)
     await loadProjects(targetCid)
   }
 
   const handleOpenChannelSettings = async (cid?: string) => {
     const targetCid = cid || selectedChannelId || 'channel_k1'
-    let ch = activeChannelDetail
-    if (!ch || ch.id !== targetCid) {
-      try {
-        ch = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${targetCid}`)
-        setActiveChannelDetail(ch)
-      } catch (e) {
-        console.error('Failed to load channel detail', e)
-      }
-    }
-    if (ch) {
-      setChannelEditForm(JSON.parse(JSON.stringify(ch)))
-    }
+    const target = channels.find(c => c.id === targetCid) 
+      || (activeChannelDetail?.id === targetCid ? activeChannelDetail : null) 
+      || DEFAULT_CHANNELS.find(c => c.id === targetCid) 
+      || DEFAULT_CHANNELS[0]
+    setChannelEditForm(JSON.parse(JSON.stringify(target)))
     setShowChannelSettingsModal(true)
+    try {
+      const ch = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${targetCid}`)
+      if (ch && ch.id) {
+        setActiveChannelDetail(ch)
+        setChannelEditForm(JSON.parse(JSON.stringify(ch)))
+      }
+    } catch (e) {
+      console.warn('Could not refresh channel detail from server, using local data', e)
+    }
   }
 
   const handleOpenChannelBrowser = async (cid?: string) => {
@@ -545,10 +626,10 @@ export default function StoryStudioPage() {
   }
 
   const handleSaveChannelSettings = async () => {
-    if (!activeChannelDetail) return
+    const targetId = channelEditForm?.id || activeChannelDetail?.id || selectedChannelId || 'channel_k1'
     try {
       setIsSavingChannel(true)
-      const res = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${activeChannelDetail.id}`, {
+      const res = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${targetId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(channelEditForm),
@@ -566,13 +647,14 @@ export default function StoryStudioPage() {
   }
 
   const handleUploadChannelCharacter = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files?.[0] || !activeChannelDetail) return
+    const targetCid = channelEditForm?.id || activeChannelDetail?.id || selectedChannelId || 'channel_k1'
+    if (!e.target.files?.[0] || !targetCid) return
     const file = e.target.files[0]
     const formData = new FormData()
     formData.append('file', file)
     try {
       setIsUploadingChannelChar(true)
-      const res = await fetchAPI<any>(`/api/story-studio/channels/${activeChannelDetail.id}/character`, {
+      const res = await fetchAPI<any>(`/api/story-studio/channels/${targetCid}/character`, {
         method: 'POST',
         body: formData,
       })
@@ -2015,6 +2097,8 @@ export default function StoryStudioPage() {
     { num: 5, title: 'Tạo Ảnh Doodle', icon: ImageIcon, desc: 'Khớp nhân vật gốc' },
     { num: 6, title: 'Ghép Video & YouTube', icon: Video, desc: 'Render MP4 & Viral Kit' },
   ]
+
+  const modalChannel: ChannelItem = (channelEditForm?.id ? channelEditForm : (activeChannelDetail || DEFAULT_CHANNELS[0]))
 
   return (
     <div className="flex flex-col min-h-screen p-6 max-w-7xl mx-auto space-y-6 text-slate-100">
@@ -4808,37 +4892,37 @@ export default function StoryStudioPage() {
       )}
 
       {/* ── Modal Cài Đặt Kênh Toàn Diện ─────────────────────────── */}
-      {showChannelSettingsModal && activeChannelDetail && (
+      {showChannelSettingsModal && (
         <div
           className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
           onClick={() => !isSavingChannel && setShowChannelSettingsModal(false)}
         >
-          <div
-            className="relative max-w-3xl w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-5 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-xl border border-amber-500/30 text-amber-400">
-                  <Tv className="w-5 h-5" />
+            <div
+              className="relative max-w-3xl w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-5 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-xl border border-amber-500/30 text-amber-400">
+                    <Tv className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                      Cài Đặt Kênh: {modalChannel.name || 'Cài Đặt Kênh'}
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      ID: <code className="text-amber-300 font-mono">{modalChannel.id || selectedChannelId}</code> • {modalChannel.video_count ?? 0} video tập
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                    Cài Đặt Kênh: {activeChannelDetail.name}
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    ID: <code className="text-amber-300 font-mono">{activeChannelDetail.id}</code> • {activeChannelDetail.video_count ?? 0} video tập
-                  </p>
-                </div>
+                <button
+                  onClick={() => setShowChannelSettingsModal(false)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <button
-                onClick={() => setShowChannelSettingsModal(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
             {/* Modal Tabs Navigation */}
             <div className="flex items-center gap-1 px-5 pt-3 border-b border-slate-800 bg-slate-950/40 overflow-x-auto">
@@ -4970,9 +5054,9 @@ export default function StoryStudioPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
                     <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
-                      {channelEditForm.character_settings?.character_image_url || activeChannelDetail.character_image_url ? (
+                      {channelEditForm.character_settings?.character_image_url || modalChannel.character_image_url ? (
                         <img
-                          src={channelEditForm.character_settings?.character_image_url || activeChannelDetail.character_image_url}
+                          src={channelEditForm.character_settings?.character_image_url || modalChannel.character_image_url}
                           alt="Character Reference"
                           className="w-36 h-36 object-contain rounded-lg border border-amber-500/30 bg-slate-900"
                         />
@@ -5196,7 +5280,7 @@ export default function StoryStudioPage() {
                       <div>
                         <span className="text-slate-400">Đường dẫn Profile:</span>
                         <div className="font-mono text-[11px] text-amber-300 truncate mt-0.5">
-                          output/story_studio/browser_profiles/{activeChannelDetail.id}
+                          output/story_studio/browser_profiles/{modalChannel.id}
                         </div>
                       </div>
                       <div>
@@ -5227,7 +5311,7 @@ export default function StoryStudioPage() {
                     <div className="pt-2">
                       <Button
                         size="sm"
-                        onClick={() => handleOpenChannelBrowser(activeChannelDetail.id)}
+                        onClick={() => handleOpenChannelBrowser(modalChannel.id)}
                         disabled={isOpeningBrowser}
                         className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs gap-1.5 w-full font-semibold shadow-md"
                       >

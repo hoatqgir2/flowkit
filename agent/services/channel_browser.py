@@ -50,9 +50,9 @@ def get_channel_profile_dir(channel_id: str) -> Path:
 
 
 def get_channel_debug_port(channel_id: str) -> int:
-    """Deterministic yet isolated debugging port per channel (between 9222 and 9499)."""
+    """Deterministic yet isolated debugging port per channel (between 9500 and 9770)."""
     h = sum(ord(c) for c in channel_id)
-    return 9222 + (h % 270)
+    return 9500 + (h % 270)
 
 
 def is_port_in_use(port: int) -> bool:
