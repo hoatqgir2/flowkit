@@ -355,7 +355,10 @@ export default function StoryStudioPage() {
 
   // Channel Management State
   const [channels, setChannels] = useState<ChannelItem[]>([])
-  const [selectedChannelId, setSelectedChannelId] = useState<string>(() => localStorage.getItem('fk_selected_channel_id') || 'all')
+  const [selectedChannelId, setSelectedChannelId] = useState<string>(() => {
+    const saved = localStorage.getItem('fk_selected_channel_id')
+    return (saved && saved !== 'all') ? saved : 'channel_k1'
+  })
   const [activeChannelDetail, setActiveChannelDetail] = useState<ChannelItem | null>(null)
   const [showChannelSettingsModal, setShowChannelSettingsModal] = useState<boolean>(false)
   const [channelSettingsTab, setChannelSettingsTab] = useState<'info' | 'character' | 'prompts' | 'tts' | 'browser'>('info')
@@ -422,23 +425,18 @@ export default function StoryStudioPage() {
   // Load channels and projects
   const loadProjects = async (targetChannelId?: string) => {
     try {
-      const chId = targetChannelId !== undefined ? targetChannelId : selectedChannelId
-      const url = chId && chId !== 'all'
-        ? `/api/story-studio/projects?channel_id=${chId}`
-        : '/api/story-studio/projects'
-      const data = await fetchAPI<{ projects: any[] }>(url)
-      setProjects(data.projects || [])
-      if (!currentProject && data.projects?.length > 0) {
-        setSelectedProjectId(data.projects[0].id)
-        loadProjectDetail(data.projects[0].id)
-      } else if (currentProject && !data.projects.some(p => p.id === currentProject.id)) {
-        if (data.projects.length > 0) {
-          setSelectedProjectId(data.projects[0].id)
-          loadProjectDetail(data.projects[0].id)
-        } else {
-          setCurrentProject(null)
-          setSelectedProjectId('')
+      const chId = targetChannelId || selectedChannelId || 'channel_k1'
+      const data = await fetchAPI<{ projects: any[] }>(`/api/story-studio/projects?channel_id=${chId}`)
+      const projList = data.projects || []
+      setProjects(projList)
+      if (projList.length > 0) {
+        if (!currentProject || !projList.some(p => p.id === currentProject.id)) {
+          setSelectedProjectId(projList[0].id)
+          await loadProjectDetail(projList[0].id)
         }
+      } else {
+        setCurrentProject(null)
+        setSelectedProjectId('')
       }
     } catch (e: any) {
       console.error('Failed to load projects', e)
@@ -451,13 +449,14 @@ export default function StoryStudioPage() {
       const chList = res.channels || []
       setChannels(chList)
       
-      const effectiveCid = selectedChannelId !== 'all' && chList.some(c => c.id === selectedChannelId)
+      const effectiveCid = (selectedChannelId && selectedChannelId !== 'all' && chList.some(c => c.id === selectedChannelId))
         ? selectedChannelId
         : (chList[0]?.id || 'channel_k1')
       
-      if (selectedChannelId !== 'all') {
-        loadChannelDetail(effectiveCid)
-      }
+      setSelectedChannelId(effectiveCid)
+      localStorage.setItem('fk_selected_channel_id', effectiveCid)
+      await loadChannelDetail(effectiveCid)
+      await loadProjects(effectiveCid)
     } catch (e) {
       console.error('Failed to load channels', e)
     }
@@ -486,7 +485,6 @@ export default function StoryStudioPage() {
 
   useEffect(() => {
     loadChannels()
-    loadProjects(selectedChannelId)
   }, [])
 
   useEffect(() => {
@@ -498,15 +496,28 @@ export default function StoryStudioPage() {
   }, [activeChannelDetail?.id])
 
   const handleSwitchChannel = async (cid: string) => {
-    setSelectedChannelId(cid)
-    localStorage.setItem('fk_selected_channel_id', cid)
-    if (cid !== 'all') {
-      await loadChannelDetail(cid)
-    } else {
-      setActiveChannelDetail(null)
-      setBrowserIsOpen(false)
+    const targetCid = (!cid || cid === 'all') ? 'channel_k1' : cid
+    setSelectedChannelId(targetCid)
+    localStorage.setItem('fk_selected_channel_id', targetCid)
+    await loadChannelDetail(targetCid)
+    await loadProjects(targetCid)
+  }
+
+  const handleOpenChannelSettings = async (cid?: string) => {
+    const targetCid = cid || selectedChannelId || 'channel_k1'
+    let ch = activeChannelDetail
+    if (!ch || ch.id !== targetCid) {
+      try {
+        ch = await fetchAPI<ChannelItem>(`/api/story-studio/channels/${targetCid}`)
+        setActiveChannelDetail(ch)
+      } catch (e) {
+        console.error('Failed to load channel detail', e)
+      }
     }
-    await loadProjects(cid)
+    if (ch) {
+      setChannelEditForm(JSON.parse(JSON.stringify(ch)))
+    }
+    setShowChannelSettingsModal(true)
   }
 
   const handleOpenChannelBrowser = async (cid?: string) => {
@@ -2007,8 +2018,9 @@ export default function StoryStudioPage() {
 
   return (
     <div className="flex flex-col min-h-screen p-6 max-w-7xl mx-auto space-y-6 text-slate-100">
-      {/* ── Top Bar & Channel / Project Selector ────────────────────────────── */}
-      <div className="flex flex-col gap-3 pb-4 border-b border-slate-800">
+      {/* ── Top Bar: Channel Tabs & Isolated Workspace ────────────────── */}
+      <div className="flex flex-col gap-4 pb-4 border-b border-slate-800">
+        {/* Row 1: Brand & Channel Switcher Tabs */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-orange-600/30 rounded-xl border border-amber-500/30 shadow-lg shadow-amber-500/10">
@@ -2020,87 +2032,144 @@ export default function StoryStudioPage() {
                   Doodle Story Studio
                 </h1>
                 <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px] bg-amber-500/10 font-mono">
-                  YouTube Channel Mode
+                  Quản Lý Theo Kênh
                 </Badge>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Quản lý theo Kênh YouTube • Profile DrissionPage độc lập • Khóa nhân vật & Template đồng bộ
+                Quản lý kịch bản độc lập theo Kênh YouTube • Profile DrissionPage & Khóa nhân vật riêng biệt
               </p>
             </div>
           </div>
 
-          {/* Channel Bar Controls */}
+          {/* Primary Channel Tabs Switcher */}
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg p-1">
-              <span className="text-[11px] text-slate-400 pl-2 font-medium flex items-center gap-1">
-                <Tv className="w-3.5 h-3.5 text-amber-400" /> Kênh:
-              </span>
-              <select
-                value={selectedChannelId}
-                onChange={e => handleSwitchChannel(e.target.value)}
-                className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[210px] truncate font-semibold text-amber-300"
-              >
-                <option value="all">📂 Tất cả kênh ({projects.length} tập)</option>
-                {channels.map(ch => (
-                  <option key={ch.id} value={ch.id}>
-                    📺 {ch.name} ({ch.video_count ?? 0} tập)
-                  </option>
-                ))}
-              </select>
-
-              {activeChannelDetail && selectedChannelId !== 'all' && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleOpenChannelBrowser(activeChannelDetail.id)}
-                    disabled={isOpeningBrowser}
-                    className={`h-7 px-2.5 text-xs gap-1.5 font-medium border-slate-700 transition-colors ${
-                      browserIsOpen
-                        ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 hover:bg-emerald-900/60'
-                        : 'bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800'
+            <div className="flex items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-xl shadow-inner">
+              {channels.map(ch => {
+                const isSelected = selectedChannelId === ch.id
+                const isK1 = ch.id === 'channel_k1'
+                return (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() => handleSwitchChannel(ch.id)}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      isSelected
+                        ? isK1
+                          ? 'bg-rose-950/80 text-rose-300 border border-rose-600/60 shadow-md shadow-rose-950/50'
+                          : 'bg-orange-950/80 text-orange-300 border border-orange-600/60 shadow-md shadow-orange-950/50'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
                     }`}
-                    title={`Mở Chrome với User Data Profile độc lập cho kênh ${activeChannelDetail.name} (DrissionPage anti-detect)`}
                   >
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${browserIsOpen ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-                    <Globe className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>{isOpeningBrowser ? 'Đang mở...' : 'Mở Profile Kênh'}</span>
-                  </Button>
+                    <Tv className={`w-3.5 h-3.5 ${isSelected ? (isK1 ? 'text-rose-400' : 'text-orange-400') : 'text-slate-500'}`} />
+                    <span>{ch.name.split('—')[0].trim()}</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                      isSelected
+                        ? isK1 ? 'bg-rose-500/20 text-rose-200' : 'bg-orange-500/20 text-orange-200'
+                        : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {ch.video_count ?? 0} tập
+                    </span>
+                  </button>
+                )
+              })}
 
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setChannelEditForm(JSON.parse(JSON.stringify(activeChannelDetail)))
-                      setShowChannelSettingsModal(true)
-                    }}
-                    className="h-7 px-2 text-slate-400 hover:text-amber-300 hover:bg-slate-800 text-xs gap-1"
-                    title="Cài đặt thông tin kênh, nhân vật đại diện, prompt template, giọng đọc"
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Cài Đặt Kênh</span>
-                  </Button>
-                </>
-              )}
-
-              <Button
-                size="sm"
-                variant="ghost"
+              <button
+                type="button"
                 onClick={() => setShowCreateChannelModal(true)}
-                className="h-7 px-2 text-slate-400 hover:text-white hover:bg-slate-800 text-xs gap-1"
-                title="Tạo kênh YouTube mới"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-emerald-300 hover:bg-slate-800 transition-colors"
+                title="Tạo thêm kênh YouTube mới"
               >
                 <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden md:inline">Thêm Kênh</span>
-              </Button>
+                <span className="hidden sm:inline">Thêm Kênh</span>
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Video / Project Selector Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/60">
+        {/* Row 2: Active Channel Header Card with Big Settings & Browser Buttons */}
+        <div className="flex flex-wrap items-center justify-between gap-4 p-3.5 bg-slate-900/80 border border-slate-800/90 rounded-xl">
+          <div className="flex items-center gap-3.5 min-w-0">
+            {activeChannelDetail?.character_image_url ? (
+              <img
+                src={activeChannelDetail.character_image_url}
+                alt="Master Character"
+                className="w-12 h-12 object-contain rounded-lg border border-amber-500/40 bg-slate-950 shadow-md shrink-0 cursor-pointer"
+                onClick={() => handleOpenChannelSettings(selectedChannelId)}
+                title="Bấm để xem/sửa ảnh nhân vật đại diện kênh"
+              />
+            ) : (
+              <div
+                className="w-12 h-12 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 shrink-0 cursor-pointer hover:border-slate-700"
+                onClick={() => handleOpenChannelSettings(selectedChannelId)}
+                title="Bấm để upload ảnh nhân vật đại diện"
+              >
+                <Tv className="w-6 h-6 opacity-40" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-bold text-slate-100 truncate">
+                  {activeChannelDetail?.name || 'Đang tải thông tin kênh...'}
+                </span>
+                {activeChannelDetail?.handle && (
+                  <span className="text-[11px] font-mono text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                    {activeChannelDetail.handle}
+                  </span>
+                )}
+                {activeChannelDetail?.title_prefix && (
+                  <Badge variant="outline" className="text-[10px] border-slate-700 text-slate-300 font-mono">
+                    Tiền tố: {activeChannelDetail.title_prefix}
+                  </Badge>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-1 flex-wrap">
+                <span>Chủ đề: <strong className="text-slate-300">{activeChannelDetail?.niche === 'ancient_humans' ? '🌿 Con Người Cổ Đại & Sinh Tồn' : activeChannelDetail?.niche === 'forgotten_civilizations' ? '🏛️ Nền Văn Minh Bị Bỏ Quên' : '🧠 Tâm Lý Học Não Bộ'}</strong></span>
+                <span>•</span>
+                <span>Kho kịch bản: <strong className="text-amber-300 font-semibold">{projects.length} tập video</strong></span>
+                <span>•</span>
+                <span className="text-[10px] text-slate-500 font-mono">Profile: output/story_studio/browser_profiles/{activeChannelDetail?.id}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+            {/* DrissionPage Browser Button */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleOpenChannelBrowser(selectedChannelId)}
+              disabled={isOpeningBrowser}
+              className={`h-8 px-3 text-xs gap-1.5 font-medium transition-colors shadow-sm ${
+                browserIsOpen
+                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 hover:bg-emerald-900/70'
+                  : 'bg-slate-950 border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800'
+              }`}
+              title={`Mở Chrome với User Data Profile độc lập cho ${activeChannelDetail?.name} (DrissionPage anti-detect, Port ${browserPort})`}
+            >
+              <span className={`w-2 h-2 rounded-full shrink-0 ${browserIsOpen ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              <Globe className="w-3.5 h-3.5 text-cyan-400" />
+              <span>{isOpeningBrowser ? 'Đang mở Chrome...' : browserIsOpen ? `Profile Kênh (Port ${browserPort})` : '🌐 Mở Profile Kênh'}</span>
+            </Button>
+
+            {/* Cài Đặt Kênh Button */}
+            <Button
+              size="sm"
+              onClick={() => handleOpenChannelSettings(selectedChannelId)}
+              className="h-8 px-3.5 bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 font-bold shadow-md shadow-amber-600/25 transition-all"
+              title="Mở bảng cài đặt thông tin kênh, ảnh nhân vật đại diện, mẫu prompt prefix/suffix, giọng đọc"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>⚙️ Cài Đặt Kênh</span>
+            </Button>
+          </div>
+        </div>
+
+        {/* Row 3: Video List in this Channel */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] text-slate-400 font-medium">Tập Video:</span>
+            <span className="text-xs text-slate-400 font-semibold flex items-center gap-1.5">
+              <Film className="w-3.5 h-3.5 text-amber-400" /> Danh sách tập ({activeChannelDetail?.name.split('—')[0].trim()}):
+            </span>
             {isEditingTitle ? (
               <div className="flex items-center gap-1.5 bg-slate-900 border border-amber-500/60 rounded-lg px-2.5 py-1 shadow-md shadow-amber-500/10">
                 <input
@@ -2112,8 +2181,8 @@ export default function StoryStudioPage() {
                     if (e.key === 'Escape') handleCancelEditTitle()
                   }}
                   autoFocus
-                  placeholder="Nhập tên dự án..."
-                  className="bg-transparent text-xs text-slate-100 focus:outline-none w-48 sm:w-64 font-medium"
+                  placeholder="Nhập tên tập..."
+                  className="bg-transparent text-xs text-slate-100 focus:outline-none w-48 sm:w-72 font-medium"
                 />
                 <Button
                   size="sm"
@@ -2133,12 +2202,12 @@ export default function StoryStudioPage() {
                 </Button>
               </div>
             ) : (
-              projects.length > 0 && (
+              projects.length > 0 ? (
                 <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-lg p-1">
                   <select
                     value={currentProject?.id || selectedProjectId || (projects[0]?.id ?? '')}
                     onChange={e => loadProjectDetail(e.target.value)}
-                    className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[200px] sm:max-w-[320px] truncate font-medium text-slate-200"
+                    className="bg-slate-950 border border-slate-800 text-xs rounded-md px-2.5 py-1.5 focus:outline-none focus:border-amber-500 max-w-[220px] sm:max-w-[400px] truncate font-semibold text-slate-100"
                   >
                     {projects.map(p => (
                       <option key={p.id} value={p.id}>{p.title}</option>
@@ -2150,7 +2219,7 @@ export default function StoryStudioPage() {
                       size="sm"
                       variant="ghost"
                       onClick={handleStartEditTitle}
-                      title="Sửa tên dự án này"
+                      title="Sửa tên tập này"
                       className="h-7 px-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 text-xs gap-1"
                     >
                       <Pencil className="w-3.5 h-3.5" />
@@ -2162,13 +2231,15 @@ export default function StoryStudioPage() {
                     size="sm"
                     variant="ghost"
                     onClick={() => setShowDeleteModal(true)}
-                    title="Xóa dự án này"
+                    title="Xóa tập này"
                     className="h-7 px-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 text-xs gap-1"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">Xóa</span>
                   </Button>
                 </div>
+              ) : (
+                <span className="text-xs text-slate-500 italic">Chưa có tập video nào trong kênh này</span>
               )
             )}
           </div>
@@ -2176,9 +2247,9 @@ export default function StoryStudioPage() {
           <Button
             size="sm"
             onClick={() => createNewProject()}
-            className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 shrink-0 font-medium"
+            className="bg-amber-600 hover:bg-amber-500 text-white text-xs gap-1.5 shrink-0 font-semibold shadow-sm"
           >
-            <Plus className="w-3.5 h-3.5" /> Tạo Video Mới {activeChannelDetail && selectedChannelId !== 'all' ? `(${activeChannelDetail.title_prefix || activeChannelDetail.name.split('—')[0].trim()})` : ''}
+            <Plus className="w-3.5 h-3.5" /> Tạo Tập Mới Trong {activeChannelDetail ? activeChannelDetail.name.split('—')[0].trim() : 'Kênh Này'}
           </Button>
         </div>
       </div>
@@ -2250,9 +2321,24 @@ export default function StoryStudioPage() {
                 <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2 mb-2">
                   <User className="w-4 h-4" /> 1. Ảnh Nhân Vật Tham Chiếu (Reference Image)
                 </h3>
-                <p className="text-xs text-slate-400 mb-4">
+                <p className="text-xs text-slate-400 mb-3">
                   Chọn 1 hình nhân vật mẫu 2D doodle chuẩn. Tất cả các phân cảnh sinh sau này sẽ dùng ảnh này làm tham chiếu hình ảnh để nhân vật không bị biến đổi!
                 </p>
+
+                <div className="flex items-center justify-between p-2.5 bg-slate-950 border border-slate-800 rounded-lg mb-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 text-amber-400" />
+                    <span>Nhân vật của kênh: <strong className="text-amber-300">{activeChannelDetail?.name || 'Kênh hiện tại'}</strong></span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleOpenChannelSettings(selectedChannelId)}
+                    className="h-6 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-950/30 gap-1 font-semibold"
+                  >
+                    <Settings className="w-3 h-3" /> Cài Đặt Kênh
+                  </Button>
+                </div>
 
                 {/* Upload or Dropzone */}
                 <div className="border-2 border-dashed border-slate-700 hover:border-amber-500/60 rounded-xl p-4 text-center transition-all bg-slate-950/40 relative">
