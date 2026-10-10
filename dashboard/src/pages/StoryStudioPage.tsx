@@ -1612,44 +1612,105 @@ export default function StoryStudioPage() {
         message: `Đang tạo ảnh cảnh #${sc.id} (${i + 1}/${total})...`
       })
 
-      try {
-        await handleGenerateSingleScene(sc.id, sc.prompt, batchTimeout)
-      } catch (err: any) {
-        const errMsg = String(err?.message || '')
-        const lowerErr = errMsg.toLowerCase()
-        const isQuota = (
-          lowerErr.includes('quota') ||
-          lowerErr.includes('limit') ||
-          lowerErr.includes('hết lượt') ||
-          lowerErr.includes('429') ||
-          lowerErr.includes('unusual') ||
-          lowerErr.includes('exhausted') ||
-          lowerErr.includes('paygate') ||
-          lowerErr.includes('cooldown') ||
-          lowerErr.includes('too many') ||
-          lowerErr.includes('credit')
-        )
-        const isConnDead = (
-          lowerErr.includes('disconnect') ||
-          lowerErr.includes('no_flow_tab') ||
-          lowerErr.includes('not_connected')
-        )
+      let sceneSuccess = false
+      let retryCount = 0
+      const maxRetries = 2
 
-        if (isQuota || isConnDead) {
-          batchCancelRef.current = true
-          activeAbortControllersRef.current.forEach(controller => {
-            try { controller.abort() } catch {}
-          })
-          activeAbortControllersRef.current.clear()
+      while (!sceneSuccess && retryCount <= maxRetries && !batchCancelRef.current) {
+        try {
+          await handleGenerateSingleScene(sc.id, sc.prompt, batchTimeout)
+          sceneSuccess = true
+        } catch (err: any) {
+          const errMsg = String(err?.message || '')
+          const lowerErr = errMsg.toLowerCase()
 
-          setBatchGenProgress({ current: i + 1, total })
-          const alertText = isQuota
-            ? `⚠️ ĐÃ DỪNG TOÀN BỘ TIẾN TRÌNH: Tài khoản Google Flow đã chạm giới hạn Quota / Rate Limit ở cảnh #${sc.id}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
-            : `⚠️ ĐÃ DỪNG TOÀN BỘ TIẾN TRÌNH: Mất kết nối tới tab Google Flow ở cảnh #${sc.id}. Vui lòng mở lại tab Flow trên Chrome.`
-          setStatusMsg({
-            type: 'err',
-            text: alertText,
-          })
+          const isConnDead = (
+            lowerErr.includes('disconnect') ||
+            lowerErr.includes('no_flow_tab') ||
+            lowerErr.includes('not_connected')
+          )
+
+          // Hard quota exhaustion (e.g. out of monthly credits, paygate)
+          const isHardQuota = (
+            (lowerErr.includes('[quota_limit]') || lowerErr.includes('insufficient_credits') || lowerErr.includes('paygate') || lowerErr.includes('hết lượt')) &&
+            !lowerErr.includes('cooldown') &&
+            !lowerErr.includes('rate_limit') &&
+            !lowerErr.includes('unusual')
+          )
+
+          // Rate limit / anti-flood cooldown (e.g. PUBLIC_ERROR_UNUSUAL_ACTIVITY, 429)
+          const isRateLimit = (
+            lowerErr.includes('rate_limit') ||
+            lowerErr.includes('cooldown') ||
+            lowerErr.includes('unusual') ||
+            lowerErr.includes('429') ||
+            lowerErr.includes('too many')
+          )
+
+          if (isConnDead) {
+            batchCancelRef.current = true
+            activeAbortControllersRef.current.forEach(controller => {
+              try { controller.abort() } catch {}
+            })
+            activeAbortControllersRef.current.clear()
+
+            setBatchGenProgress({ current: i + 1, total })
+            setStatusMsg({
+              type: 'err',
+              text: `⚠️ ĐÃ DỪNG TOÀN BỘ TIẾN TRÌNH: Mất kết nối tới tab Google Flow ở cảnh #${sc.id}. Vui lòng mở lại tab Flow trên Chrome.`
+            })
+            break
+          }
+
+          if (isHardQuota) {
+            batchCancelRef.current = true
+            activeAbortControllersRef.current.forEach(controller => {
+              try { controller.abort() } catch {}
+            })
+            activeAbortControllersRef.current.clear()
+
+            setBatchGenProgress({ current: i + 1, total })
+            setStatusMsg({
+              type: 'err',
+              text: `⚠️ ĐÃ DỪNG TIẾN TRÌNH: Tài khoản Google Flow đã thực sự hết Quota ở cảnh #${sc.id}. Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ Tham Chiếu sang Acc mới' để tiếp tục.`
+            })
+            break
+          }
+
+          if (isRateLimit && retryCount < maxRetries && !batchCancelRef.current) {
+            retryCount++
+            const cooldownSec = 35
+            // Clear backend hijack lock
+            try {
+              await fetchAPI('/api/flow/clear-hijack', { method: 'POST' })
+            } catch {}
+
+            for (let c = cooldownSec; c > 0; c--) {
+              if (batchCancelRef.current) break
+              setBatchGenProgress({
+                current: i,
+                total,
+                message: `⏳ Cảnh #${sc.id}: Google Flow tạm nghỉ chống flood (Rate Limit). Tự động thử lại sau ${c}s (lần ${retryCount}/${maxRetries})...`
+              })
+              await new Promise(r => setTimeout(r, 1000))
+            }
+            if (!batchCancelRef.current) {
+              setBatchGenProgress({
+                current: i,
+                total,
+                message: `🔄 Đang thử lại tạo ảnh cảnh #${sc.id} (lần ${retryCount}/${maxRetries})...`
+              })
+              continue
+            }
+          }
+
+          // If reached here: either not rate limit, or retries exhausted, or user cancelled
+          if (!batchCancelRef.current) {
+            setStatusMsg({
+              type: 'err',
+              text: `Cảnh #${sc.id} tạm thời không tạo được ảnh (${errMsg.slice(0, 100)}). Hệ thống sẽ bỏ qua để tiếp tục các cảnh còn lại.`
+            })
+          }
           break
         }
       }
@@ -1659,6 +1720,19 @@ export default function StoryStudioPage() {
       }
 
       setBatchGenProgress({ current: i + 1, total })
+
+      // Periodic anti-flood breathing pause every 15 consecutive scenes
+      if (i > 0 && (i + 1) % 15 === 0 && i < scenesToProcess.length - 1 && !batchCancelRef.current) {
+        for (let s = 12; s > 0; s--) {
+          if (batchCancelRef.current) break
+          setBatchGenProgress({
+            current: i + 1,
+            total,
+            message: `☕ Đã tạo liên tiếp ${i + 1} cảnh! Tạm nghỉ ${s}s để giữ an toàn cho tài khoản và chống chặn flood...`
+          })
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
 
       // Random delay between min and max seconds before next scene
       const minD = Math.max(0, Math.min(delayMin, delayMax))

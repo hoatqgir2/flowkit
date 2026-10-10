@@ -2160,8 +2160,12 @@ async def generate_single_scene_image(
     if res.get("status", 200) >= 400 or res.get("error"):
         err_msg = str(res.get("error") or res.get("data") or "Flow image generation failed")
         lower_err = err_msg.lower()
-        if any(k in lower_err for k in ["quota", "limit", "429", "unusual", "exhausted", "paygate", "credit", "cooldown", "too many requests", "hết lượt"]):
-            err_msg = f"[QUOTA_LIMIT] Tài khoản Google Flow đã chạm giới hạn quota hoặc rate limit ({err_msg}). Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ tham chiếu sang Acc mới' để tiếp tục."
+        is_hard_quota = any(k in lower_err for k in ["quota_exceeded", "daily_limit", "exhausted", "paygate", "insufficient_credit", "hết lượt"])
+        is_rate_limit = any(k in lower_err for k in ["unusual_activity", "unusual activity", "429", "rate_limit", "rate limit", "too many requests", "cooldown active"])
+        if is_hard_quota:
+            err_msg = f"[QUOTA_LIMIT] Tài khoản Google Flow đã hết lượt / quota ({err_msg}). Hãy chuyển sang tài khoản Google khác trên Chrome và bấm 'Đồng bộ tham chiếu sang Acc mới' để tiếp tục."
+        elif is_rate_limit:
+            err_msg = f"[RATE_LIMIT_COOLDOWN] Google Flow đang tạm thời giãn cách tần suất (Anti-flood / Rate Limit: {err_msg}). Hệ thống sẽ tự động tạm nghỉ rồi thử lại."
         raise RuntimeError(err_msg)
 
     media_list = res.get("data", {}).get("media", [])

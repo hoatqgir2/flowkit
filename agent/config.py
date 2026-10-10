@@ -58,7 +58,7 @@ FLOW_GENERATION_MAX_CONCURRENT = max(
     1, int(os.environ.get("FLOW_GENERATION_MAX_CONCURRENT", "1"))
 )
 FLOW_UNUSUAL_ACTIVITY_COOLDOWN_S = max(
-    0.0, float(os.environ.get("FLOW_UNUSUAL_ACTIVITY_COOLDOWN_S", "120"))
+    0.0, float(os.environ.get("FLOW_UNUSUAL_ACTIVITY_COOLDOWN_S", "45"))
 )
 FLOW_SESSION_PROJECT_IDLE_S = max(
     300.0, float(os.environ.get("FLOW_SESSION_PROJECT_IDLE_S", "7200"))
