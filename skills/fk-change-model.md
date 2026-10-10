@@ -29,8 +29,8 @@ So changing a Landscape vs Portrait key has **no effect** on the batch path —
 only the quality tier survives the fold. `r2v` and `start_end` keys are moot
 there too: both are unported.
 
-Image models are unaffected: `GEM_PIX_2` (Nano Banana Pro) and `BELUGA`
-(Banana 2, formerly `NARWHAL`) are both accepted, and `default_image_model` in `models.json` picks
+Image models are unaffected: `GEM_PIX_2` (Nano Banana Pro) and `NARWHAL`
+(Banana 2) are both accepted, and `default_image_model` in `models.json` picks
 which nickname is used.
 
 ## Step 1: Show Current Models
@@ -57,8 +57,7 @@ Display in a readable table:
 | Key | Model |
 |-----|-------|
 | NANO_BANANA_PRO | `GEM_PIX_2` |
-| NANO_BANANA_2 | `BELUGA` |
-| NANO_BANANA_2_LITE | `HARBOR_SEAL` |
+| NANO_BANANA_2 | `NARWHAL` |
 
 ### Upscale Models
 
@@ -82,9 +81,8 @@ After user picks, apply the matching preset from the Quick Switch Presets sectio
 
 **For image model:**
 Use `AskUserQuestion` with options:
-- label: "BELUGA (Recommended for Banana 2)", description: "Nano Banana 2 wire ID"
-- label: "GEM_PIX_2", description: "Gemini Pix 2 (Nano Banana Pro)"
-- label: "HARBOR_SEAL", description: "Nano Banana 2 Lite"
+- label: "GEM_PIX_2 (Recommended)", description: "Gemini Pix 2 · current default"
+- label: "NARWHAL", description: "Alternative image model"
 
 ## Step 3: Change a Model (Manual)
 
@@ -232,10 +230,8 @@ curl -s -X PATCH http://127.0.0.1:8100/api/models \
 ### Image
 | Key | Description |
 |-----|-------------|
-| `BELUGA` | Nano Banana 2 (current default) |
-| `GEM_PIX_2` | Gemini Pix 2 (Nano Banana Pro) |
-| `HARBOR_SEAL` | Nano Banana 2 Lite |
-| `NARWHAL` | Nano Banana 2 (legacy wire ID) |
+| `GEM_PIX_2` | Gemini Pix 2 (current default) |
+| `NARWHAL` | Narwhal model |
 
 ### Upscale
 | Key | Description |
